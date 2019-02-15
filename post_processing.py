@@ -9,92 +9,31 @@ import time
 import seaborn as sns
 import copy
 
-from method import bicluster_avg_SNR
 
-
-############# read trajectories and restore modules ###### 
-
-def check_convergence_condition(edge2module_history,edges_skip_history,min_pletau_steps = 10,max_edges_oscillating =500):
-    if len(edge2module_history) <= min_pletau_steps:
-        return False
-    else:
-        skips = edges_skip_history[-min_pletau_steps:]
-        #print(min(map(len,skips)) - max(map(len,skips)),map(len,skips))
-    if max(map(len,skips)) > max_edges_oscillating:
-        return False
-    else:
-        if max(map(len,skips)) - min(map(len,skips)) <= 0.1* max_edges_oscillating:
-            return True
-        else:
-            return False
-        
-def restore_modules(edge2module,edges,subnet,exprs):
-    t_0 = time.time()
-    moduleSizes=np.zeros(len(edge2module))
-    all_pats = list(exprs.columns.values)
-    nOnesPerPatientInModules= np.zeros((len(edge2module), len(all_pats)))
-
-    for i in range(0,len(edge2module)):
-        e2m = edge2module[i]
-        # module sizes
-        moduleSizes[e2m] +=1
-        # number of ones per patient per module
-        n1,n2 = edges[i]
-        pats_in_module = subnet[n1][n2]["patients"]
-        x = np.zeros(len(all_pats), dtype='int')
-        i = 0
-        for p in all_pats:
-            if p in pats_in_module:
-                x[i] = 1.0
-            i+=1
-        nOnesPerPatientInModules[e2m,] += x
-    print(round(time.time()- t_0,2) , "s runtime", file = sys.stderr)
-    return moduleSizes, nOnesPerPatientInModules
-
-####################### manipulations with modules ##########
-def get_genes(mid,edge2module=[],edges=[]):
-    ndx = [i for i, j in enumerate(edge2module) if j == mid]
-    genes = []
-    for edge in [edges[i] for i in ndx]:
-        genes.append(edge[0])
-        genes.append(edge[1])
-    genes = list(set(genes))
-    return genes
-
-def get_opt_pat_set(n_ones, m_size, exprs,genes, min_n_patients=50):
-    best_pat_set = []
-    best_SNR = 0
-    best_thr = -1
-    thresholds = sorted(list(set(n_ones/m_size)),reverse=True)[:-1]
-    thresholds =  [x for x in thresholds if x >= 0.5]
-    for thr in thresholds:
-        ndx = np.where(n_ones/m_size >= thr)[0]
-        pats = exprs.iloc[:,ndx].columns.values
-        if len(pats) > min_n_patients:
-            avgSNR =  bicluster_avg_SNR(pats=pats, genes=genes, exprs=exprs, absolute = True)
-            if avgSNR > best_SNR: 
-                best_SNR = avgSNR 
-                best_pat_set = pats
-                best_thr = thr
-    return best_pat_set, best_thr, best_SNR
-
-def plot_bic_stats(n_pats, n_genes, SNRs):
+def plot_bic_stats(bics):
     plt.figure(figsize=(20,5))
-    plt.subplot(131)
-    tmp = plt.hist(n_pats, bins=50)
-    tmp = plt.title("n_patients")
-    plt.subplot(132)
-    tmp = plt.hist(n_genes, bins=50)
-    tmp = plt.title("n_genes")
-    plt.subplot(133)
-    tmp = plt.hist(SNRs, bins=50)
-    tmp = plt.title("avg. SNR")  
-    
+    i = 1
+    for var in ["genes", "patients"]:
+        vals = []
+        for bic in bics:
+            vals.append(len(bic[var]))
+        plt.subplot(1,3,i)
+        i+=1
+        tmp = plt.hist(vals, bins=50)
+        tmp = plt.title(var)
+    vals = []
+    plt.subplot(1,3,3)
+    for bic in bics:
+        vals.append(bic["avgSNR"])
+    tmp = plt.hist(vals, bins=50)
+    tmp = plt.title("avg. |SNR|")
+        
+
 def write_modules(bics,file_name):
     fopen = open(file_name,"w")
     for bic in bics:
         print("id:\t"+str(bic["id"]), file=fopen)
-        print("average SNR:\t"+str(bic["SNR"]),file=fopen)
+        print("average SNR:\t"+str(bic["avgSNR"]),file=fopen)
         print("genes:\t"+" ".join(bic["genes"]),file=fopen)
         print("patients:\t"+" ".join(bic["patients"]),file=fopen)
     fopen.close()
@@ -117,7 +56,7 @@ def add_bic(ndx, ndx2, bics, new_pats, new_SNR, SNRs,pat_overlap, nOnesPerPatien
     # bic := bic + bic2
     bic["genes"]  =  bic["genes"] | bic2["genes"]
     bic["patients"] =  new_pats
-    bic["SNR"] = new_SNR
+    bic["avgSNR"] = new_SNR
     # update bic in bics, SNRs,pat_overlap
     bics[ndx] = bic
     SNRs[ndx] = new_SNR
@@ -157,7 +96,7 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,SNRs = [],
                  min_patient_overlap = 0.5,min_acceptable_SNR_percent=0.9, verbose = True):
     t_0 = time.time()
     if len(SNRs) == 0:
-        SNRs = [bic["SNR"] for bic in bics]
+        SNRs = [bic["avgSNR"] for bic in bics]
     if verbose:
         print("Input:", len(bics),"modules to merge", file = sys.stderr)
     
@@ -182,7 +121,7 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,SNRs = [],
         ndx = np.argmax(SNRs)
         bic = bics[ndx]
         if verbose:
-            print("Grow module:",bic["id"],"SNR",bic["SNR"], "pats",len(bic["patients"]), "genes",  bic["genes"])
+            print("Grow module:",bic["id"],"avg.|SNR|",bic["avgSNR"], "pats",len(bic["patients"]), "genes",  bic["genes"])
         best_candidate_ndx = -1
         best_new_SNR = min_acceptable_SNR_percent*SNRs[ndx]
         best_pat_set = bic["patients"]
@@ -190,10 +129,10 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,SNRs = [],
         for candidate_ndx in candidate_ndxs:
             bic2 = bics[candidate_ndx]
             if verbose:
-                print("\t trying module:",bic2["id"],"SNR",bic2["SNR"], "pats",len(bic2["patients"]), "genes", bic2["genes"])
+                print("\t trying module:",bic2["id"],"avg.|SNR|",bic2["avgSNR"], "pats",len(bic2["patients"]), "genes", bic2["genes"])
             new_pats, new_SNR = calc_new_SNR(bic, bic2 ,exprs, nOnesPerPatientInModules,moduleSizes)
             if verbose:
-                print("\t\t SNR:",new_SNR,"passed:",new_SNR > best_new_SNR)
+                print("\t\t avg.|SNR|:",new_SNR,"passed:",new_SNR > best_new_SNR)
             if new_SNR > best_new_SNR:
                 #print("\t\t set SNR:", best_new_SNR, "-->", new_SNR, "and select",candidate_ndx)
                 best_new_SNR = new_SNR
@@ -201,7 +140,7 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,SNRs = [],
                 best_pat_set = new_pats
         if best_candidate_ndx >= 0:
             if verbose:
-                print("\tmerge",bic["id"],"+",bics[best_candidate_ndx]["id"], "SNR",best_new_SNR,"patients",len(best_pat_set))
+                print("\tmerge",bic["id"],"+",bics[best_candidate_ndx]["id"], "avg.|SNR|",best_new_SNR,"patients",len(best_pat_set))
             # add bic2 to bic and remove bic2
             bics, SNRs, pat_overlap, nOnesPerPatientInModules, moduleSizes = add_bic(ndx, best_candidate_ndx,bics,
                                                                                              set(best_pat_set), best_new_SNR,
