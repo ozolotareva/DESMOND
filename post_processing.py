@@ -9,6 +9,8 @@ import time
 import seaborn as sns
 import copy
 
+from method import get_opt_pat_set
+
 
 def plot_bic_stats(bics):
     plt.figure(figsize=(20,5))
