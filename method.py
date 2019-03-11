@@ -516,23 +516,43 @@ def sampling(edges,  edgeNeighorhood, edge2module, edge2patients,
                 j = neighborModules[m]
                 oneRatios = (nOnesPerPatientInModules[j,]+alpha/2)/(moduleSizes[j]+alpha)
                 zeroRatios = 1-oneRatios
-                # term for module size + term for module values
-                module_size_term = np.log(moduleSizes[j]+beta_K)
-                ones_matching_term = np.inner(np.log(oneRatios),edge2patients[i,])[0][0] #35
-                zeros_matching_term = np.inner(np.log(zeroRatios),(1-edge2patients[i,]))[0][0]
-                probs[m] = module_size_term+ones_matching_term+zeros_matching_term
-            # adjusting the log values before normalization to avoid over-/under-flow
+                with np.errstate(divide='raise'):
+                    try:
+                        # term for module size + term for module values
+                        module_size_term = np.log(moduleSizes[j]+beta_K)
+                    except:
+                        print("Wrong value in module_size_term\n:", m, n_step,moduleSizes[j], beta_K)
+                    try:
+                        ones_matching_term = np.inner(np.log(oneRatios),edge2patients[i,])[0,0] 
+                    except:
+                         print("Wrong value in ones_matching_term\n:", m, n_step, np.log(oneRatios),edge2patients[i,])
+                    try:
+                        zeros_matching_term = np.inner(np.log(zeroRatios),(1-edge2patients[i,]))[0,0]
+                    except:
+                        print("Wrong value in zeroes_matching_term\n:", m, n_step, np.log(zeroRatios),(1-edge2patients[i,]))
+                p = module_size_term+ones_matching_term+zeros_matching_term
+                # replace nans to min possible log(np.float)
+                if np.isnan(p):
+                    probs[m] = - max_log_float 
+                else:
+                    probs[m] = p
+            # adjusting the log values before normalization to avoid under-flow
             max_prob = max(probs)
-            # handle under-float
-            max_prob = max_prob - max_log_float#- np.log(len(neighborModules)))
-            if max_prob > max_log_float:
-                probs = probs-max_prob
-
-            if sum(probs) > max_log_float:
-                probs = probs-max_log_float
-            probs = np.exp(probs)
-            total_prob = sum(probs)
-            # sampling the module 
+            # shift all probs to set max_prob less than log(max_np.float)  
+            log_prob_shift = max_log_float - max_prob - np.log(len(probs)) - 2
+            probs = probs + log_prob_shift
+            # set to minimal values all p < min_log_float or p-max_p <  min_log_float
+            max_prob = max(probs)
+            for m in range(len(probs)):
+                if probs[m] < - max_log_float or probs[m] - max_prob < - max_log_float:
+                    probs[m] = - max_log_float  
+            with np.errstate(divide='raise'):
+                try:
+                    total_prob = np.log(sum(np.exp(probs)))
+                    probs  = probs-total_prob
+                except:
+                    print("Wrong value in probs after np.exp\n:",probs)
+            # sampling the module
             newModule = np.random.choice(neighborModules, p = probs/total_prob) #50
             if newModule != edge2module[i]:
                 #print("change", i,"edge:",edge2module[i],"-->",newModule)
