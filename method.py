@@ -109,12 +109,12 @@ def print_network_stats(G,print_cc = True):
         is_directed = "Directed"
     else:
         is_directed = "Undirected"
-    print(is_directed,"graph with",len(ccs),"connected components; with",len(G.nodes()),"nodes and",len(G.edges()),"edges;")
+    print(is_directed,"graph with",len(ccs),"connected components; with",len(G.nodes()),"nodes and",len(G.edges()),"edges;", file = sys.stderr)
     if print_cc and len(ccs)>1:
         i = 0
         for cc in ccs:
             i+=1
-            print("Connected component",i,":",len(cc.nodes()),"nodes and",len(cc.edges()),"edges")
+            print("Connected component",i,":",len(cc.nodes()),"nodes and",len(cc.edges()),"edges", file = sys.stderr)
             
 def shortest_paths_matrix(G,node_list,add_rand_nodes = 0):
     n_list = []
@@ -161,7 +161,7 @@ def count_masked_edges(subnet):
             n_edges+=1
     return n_edges
 
-def plot_patient_ditsribution_and_mask_edges(subnet,min_n_patients=10,title=""):
+def plot_patient_ditsribution_and_mask_edges(subnet,min_n_patients=10,title="", plot = True):
     n_pats = []
     for edge in subnet.edges():
         n1,n2 = edge
@@ -170,9 +170,10 @@ def plot_patient_ditsribution_and_mask_edges(subnet,min_n_patients=10,title=""):
         if pats < min_n_patients:
             subnet[n1][n2]["masked"] = True
         n_pats.append(pats)
-    
-    tmp = plt.hist(n_pats,bins=50)
-    tmp = plt.title(title)
+        
+    if plot:
+        tmp = plt.hist(n_pats,bins=50)
+        tmp = plt.title(title)
     return subnet
 
 #### Precompute a matrix of thresholds for RRHO #####
@@ -216,7 +217,7 @@ def expression_profiles2nodes(subnet, exprs, direction):
         subnet = subnet.subgraph(list(nodes_with_exprs)).copy()
     # keep only genes corresponding nodes in the expression matrix 
     e = exprs.loc[nodes_with_exprs,:].T
-    print("Genes in expression matrix",e.shape, file=sys.stderr)
+    print("Samples x Genes in expression matrix",e.shape, file=sys.stderr)
     
     # assign expression profiles to every node  
     node2exprs = {}
@@ -393,14 +394,15 @@ def assign_patients2edges(subnet, method="top_half",fixed_step=10,significance_t
     #nx.set_edge_attributes(subnet, 'patients', edge2pats)
     return subnet
 
-def load_subnetworks(infile_name):
+def load_subnetworks(infile_name, verbose = True):
     t0 = time.time()
     '''Reads subnetworks from file.'''
     # read from file
     network = nx.read_edgelist(infile_name)
     subnetworks = sorted(nx.connected_component_subgraphs(network), key=len,reverse=True)
     # split into CC
-    print("load_subnetworks() runtime", round(time.time()-t0,2),"s", file =sys.stderr)
+    if verbose:
+        print("load_subnetworks() runtime", round(time.time()-t0,2),"s", file =sys.stderr)
     return subnetworks
 
 def save_subnetworks(subnetworks,outfile_name):
@@ -432,7 +434,7 @@ def set_initial_distribution(subnet, exprs, basename, out_dir):
         n1,n2 = edge
         if not subnet[n1][n2]["masked"]:
             edges.append(edge)
-    print(round(time.time()- t_0,2) , "s runtime", file = sys.stderr)
+    print("\tcreated the list of non-empty edges in",round(time.time()- t_0,2) , "s", file = sys.stderr)
     
     
     # 2). dict of neighbouring edge indices for every edge
@@ -441,7 +443,7 @@ def set_initial_distribution(subnet, exprs, basename, out_dir):
     
     if os.path.exists(out_dir+edgeNeighbourhood_file): # if the file exists, load
         edgeNeighorhood = np.load(out_dir+edgeNeighbourhood_file).item()
-        print("loaded",edgeNeighbourhood_file,"file in",round(time.time()- t_0,2) , "s", file = sys.stderr)
+        print("\tloaded",edgeNeighbourhood_file,"file in",round(time.time()- t_0,2) , "s", file = sys.stderr)
     else: # if no file exists, create and save
         edgeNeighorhood = {}
         for i in range(0,len(edges)):
@@ -453,16 +455,15 @@ def set_initial_distribution(subnet, exprs, basename, out_dir):
                 if n2 in adj_edge or n2 in adj_edge:
                     edgeNeighorhood[i].append(j)
             if i%10000 == 0:
-                print(i, "edges processed")
+                print("\t\t",i, "edges processed", file = sys.stderr)
         np.save(out_dir+edgeNeighbourhood_file, edgeNeighorhood)
-        print("created",edgeNeighbourhood_file,"file in",round(time.time()- t_0,2) , "s", file = sys.stderr)
+        print("\tcreated",edgeNeighbourhood_file,"file in",round(time.time()- t_0,2) , "s", file = sys.stderr)
         
     t_0 = time.time()
     # 3. vector of modules indexes of edges, initialized so that each edge is in a separate module
     edge2module = range(0,len(edges))
     # 4. the number of edges inside each component, initially 1 for each component
     moduleSizes=np.ones(len(edges))
-    print(round(time.time()- t_0,2) , "s runtime", file = sys.stderr)
     # 5. edges with associated patients
     edge2patients = []
     all_pats = list(exprs.columns.values)
@@ -553,9 +554,8 @@ def sampling(edges,  edgeNeighorhood, edge2module, edge2patients,
                 except:
                     print("Wrong value in probs after np.exp\n:",probs)
             # sampling the module
-            newModule = np.random.choice(neighborModules, p = probs/total_prob) #50
+            newModule = np.random.choice(neighborModules, p = np.exp(probs)) 
             if newModule != edge2module[i]:
-                #print("change", i,"edge:",edge2module[i],"-->",newModule)
                 changes.append(i)
             # placing i-th edge into a new module
             edge2module[i] = newModule
@@ -564,8 +564,8 @@ def sampling(edges,  edgeNeighorhood, edge2module, edge2patients,
             nOnesPerPatientInModules[edge2module[i],] = nOnesPerPatientInModules[edge2module[i],]+edge2patients[i,]
         edge2module_history.append(copy.copy(edge2module))
         edges_skip_history.append(changes)
-        print("step",n_step,"n_changes",len(changes))#, "n_warnings", warnings)
-        print(round(time.time()- t_0,4) , "s runtime", file = sys.stderr)
+        print("step",n_step,"n_changes",len(changes), file = sys.stderr)#, "n_warnings", warnings)
+        print(round(time.time()- t_0,1) , "s runtime", file = sys.stderr)
         # check convergence condition
         cc = check_convergence_condition(edge2module_history,edges_skip_history,
                                      min_pletau_steps = min_pletau_steps,
@@ -573,9 +573,9 @@ def sampling(edges,  edgeNeighorhood, edge2module, edge2patients,
         if cc: # stop sampling if true 
             edge2module_history_slice = edge2module_history[-min_pletau_steps:]
             print("The model converged after", n_step,"steps.", file = sys.stderr)
-            return edge2module_history, edges_skip_history, edge2module_history_slice
+            return edge2module_history[-min_pletau_steps:]
     print("The model did not converged.", file = sys.stderr)
-    return edge2module_history, edges_skip_history,  edge2module_history[-min_pletau_steps:]
+    return edge2module_history[-min_pletau_steps:]
 
 
 ### get consensus module membership
@@ -684,3 +684,14 @@ def get_opt_pat_set(n_ones, m_size, exprs,genes, min_n_patients=50):
                 best_pat_set = pats
                 best_thr = thr
     return best_pat_set, best_thr, best_SNR
+
+def write_modules(bics,file_name):
+    fopen = open(file_name,"w")
+    for bic in bics:
+        print("id:\t"+str(bic["id"]), file=fopen)
+        print("average SNR:\t"+str(bic["avgSNR"]),file=fopen)
+        print("genes:\t"+" ".join(bic["genes"]),file=fopen)
+        print("patients:\t"+" ".join(bic["patients"]),file=fopen)
+    fopen.close()
+    print(str(len(bics)),"modules written to",file_name,file = sys.stderr)
+    
