@@ -23,7 +23,7 @@ import seaborn as sns
 
 ###### Reading and preprocessing of input files ####################
 def prepare_input_data(exprs_file, network_file, seeds = [], verbose = True, min_n_nodes = 3):
-    '''1) Converts the network into undirected, renames nodes. 
+    '''1) Reads network in .tab or cx format. Converts the network into undirected, renames nodes. 
     \n2) Keeps only genes presenting in the network and expression matrix and retains only large connected components with more than 10 nodes.
     \n3) Remove seeds absent in the expression matrix or network.'''
     ### read expressoin matrix
@@ -40,12 +40,17 @@ def prepare_input_data(exprs_file, network_file, seeds = [], verbose = True, min
         seeds = set(list(pd.read_csv(seeds,header=None)[0].values))
         
     #### read and prepare the network
-    # assume ndex format
-    network = ndex2.create_nice_cx_from_file(network_file)
-    network = network.to_networkx()
+    # try reading .tab network, e.g.gene1\tgene2\t...
+    try:
+        network = nx.read_edgelist(network_file)
+    except:
+        # assume ndex format
+        network = ndex2.create_nice_cx_from_file(network_file)
+        network = network.to_networkx()
+        # rename nodes 
+        network  = rename_nodes(network)
+    # convert to undirected network
     network = nx.Graph(network.to_undirected())
-    # rename nodes 
-    network  = rename_nodes(network)
     network_genes = network.nodes()
     ccs = list(nx.connected_component_subgraphs(network))
     if verbose:
