@@ -28,6 +28,7 @@ def prepare_input_data(exprs_file, network_file, seeds = [], verbose = True, min
     \n3) Remove seeds absent in the expression matrix or network.'''
     ### read expressoin matrix
     exprs = pd.read_csv(exprs_file, sep = "\t",index_col=0)
+    #exprs.rename(str,axis="index",inplace=True) # this is because 
     exprs_genes = exprs.index.values
     ### read seeds 
     if len(set(exprs_genes)) != len(exprs_genes):
@@ -42,13 +43,17 @@ def prepare_input_data(exprs_file, network_file, seeds = [], verbose = True, min
     #### read and prepare the network
     # try reading .tab network, e.g.gene1\tgene2\t...
     try:
-        network = nx.read_edgelist(network_file)
+        network = nx.read_weighted_edgelist(network_file)
+        try: 
+                network = nx.relabel_nodes(network,int)
+        except:
+            print("Node names are string")
     except:
         # assume ndex format
         network = ndex2.create_nice_cx_from_file(network_file)
         network = network.to_networkx()
         # rename nodes 
-        network  = rename_nodes(network)
+        network  = rename_ndex_nodes(network)
     # convert to undirected network
     network = nx.Graph(network.to_undirected())
     network_genes = network.nodes()
@@ -101,7 +106,7 @@ def prepare_input_data(exprs_file, network_file, seeds = [], verbose = True, min
                   "\n\tnetwork:",len(network_genes),"genes ",len(network.edges()) ,"edges in",len(ccs),"connected components:",file=sys.stderr)
         return exprs, network # no seeds
 
-def rename_nodes(G,attribute_name="name"):
+def rename_ndex_nodes(G,attribute_name="name"):
     rename_nodes = {}
     for n in G.node:
         rename_nodes[n] =  G.node[n][attribute_name]
@@ -404,6 +409,10 @@ def load_subnetworks(infile_name, verbose = True):
     '''Reads subnetworks from file.'''
     # read from file
     network = nx.read_edgelist(infile_name)
+    try:
+        network = nx.relabel_nodes(network,int)
+    except:
+        pass
     subnetworks = sorted(nx.connected_component_subgraphs(network), key=len,reverse=True)
     # split into CC
     if verbose:
