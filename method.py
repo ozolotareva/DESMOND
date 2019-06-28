@@ -452,7 +452,7 @@ def set_initial_distribution(subnet, exprs, basename, out_dir):
             edgeNeighorhood[i] = []
             for j in range(0,len(edges)):
                 adj_edge = edges[j]
-                if n2 in adj_edge or n2 in adj_edge:
+                if n1 in adj_edge or n2 in adj_edge:
                     edgeNeighorhood[i].append(j)
             if i%10000 == 0:
                 print("\t\t",i, "edges processed", file = sys.stderr)
