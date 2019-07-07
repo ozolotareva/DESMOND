@@ -1,14 +1,13 @@
 from __future__ import print_function
+# v1.1
 import sys,os
 
 import numpy as np
-from scipy.stats import hypergeom # ,fisher_exact
+from scipy.stats import hypergeom
 from fisher import pvalue
 import pandas as pd
  
 import networkx as nx
-import ndex2.client
-import ndex2
 
 import itertools
 import warnings
@@ -17,23 +16,23 @@ import datetime
 import copy
 import random
 import argparse
+import pickle
 
-#sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
-from method import prepare_input_data, print_network_stats
-from method import precompute_RRHO_thresholds
+sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
 
-from method import  expression_profiles2nodes, assign_patients2edges, save_subnetworks,load_subnetworks
-from method import plot_patient_ditsribution_and_mask_edges, count_emtpy_edges, count_masked_edges
+from desmond_io import prepare_input_data, print_network_stats
+from desmond_io import save_network, load_network
+from method import precompute_RRHO_thresholds,  expression_profiles2nodes, assign_patients2edges, mask_empty_edges_and_plot
 
-from method import  set_initial_distribution,sampling, get_consensus_module_membrship
-from method import check_convergence_condition, restore_modules, get_genes, get_opt_pat_set
-from post_processing import plot_bic_stats, write_modules, merge_modules
+from method import set_initial_conditions, calc_lp, calc_norm_coef 
+from desmond_io import save_object, load_object
+from method import sampling, check_convergence,apply_changes
+from method import get_consensus_modules
 
 parser = argparse.ArgumentParser(description="""Searches for genes differentially expressed in an unknown subgroup of samples.""" , formatter_class=argparse.RawTextHelpFormatter)
 
 parser.add_argument('-e','--exprs', dest='exprs_file', type=str, help='Expression matrix with sample name in columns and gene in rows, tab-separated.', default='', required=True,metavar='exprs_zscores.tsv')
-parser.add_argument('-n','--network', dest='network_file', type=str, help='Network in NDEX2 format.', default='', required=True, metavar='network.cx')
-parser.add_argument('-s','--seeds', dest='seeds_file', type=str, help='File with seed gene names.', default='', required=False)
+parser.add_argument('-n','--network', dest='network_file', type=str, help='Network in tab or NDEX2 format.', default='', required=True, metavar='network.cx')
 parser.add_argument('-d','--direction', dest='direction', type=str, help='Direction of dysregulation: UP or DOWN', default='UP', required=False)
 parser.add_argument('-m','--method', dest='method', type=str, help='How to assign patients on edges: RHHO or top_halves', default='RRHO', required=False)
 parser.add_argument('-basename','--basename', dest='basename', type=str, help='Output basename without extention. If no outfile name provided output will be set "results_hh:mm_dddd-mm-yy".', default='', required=False)
@@ -41,25 +40,29 @@ parser.add_argument('-o','--out_dir', dest='out_dir', type=str, help='Output dir
 ### sampling parameters ###
 parser.add_argument('--alpha', dest='alpha', type=float, help='Alpha.', default=0.1, required=False)
 parser.add_argument('--beta_K', dest='beta_K', type=float, help='Beta/K.', default=1.0, required=False)
-parser.add_argument('--max_n_steps', dest='max_n_steps', type=int, help='Maximal number of steps.', default=100, required=False)
-parser.add_argument('--min_pletau_steps', dest='min_pletau_steps', type=int, help='Minimal number of steps satisfying pletau condition.', default=30, required=False)
-### RWR parameters ###
-parser.add_argument('--r', dest='r', type=float, help='Restart probability. Controlls the expected number of steps, e.g. for r=0.3 is 2.3.', default=0.3, required=False)
-parser.add_argument('--delta', dest='delta', type=float, help='RWR tolerance.', default=0.000001, required=False)
-parser.add_argument('--rwr_thr', dest='rwr_t', type=float, help='RWR probability threshold. Determines how large subnetworks will be; strongly depends on the network topology.', default=0.001, required=False)
+parser.add_argument('--p_val', dest='p_val', type=float, help='Significance threshold for RRHO method.', default=0.05, required=False)
+parser.add_argument('--max_n_steps', dest='max_n_steps', type=int, help='Maximal number of steps.', default=50, required=False)
+parser.add_argument('--n_pletau_steps', dest='n_pletau_steps', type=int, help='Number of steps satisfying pletau condition.', default=20, required=False)
+parser.add_argument('--max_frac_edges_oscillating', dest='max_frac_edges_oscillating', type=float, help='Maximal fraction of oscilating edges allowed during last min_pletau_steps to satisfy convergense condition.', default=0.01, required=False)
+### merging and filtering parameters
+parser.add_argument('--min_SNR', dest='min_SNR', type=float, help='SNR threshold for biclusters to consider.', default=0.5, required=False)
+parser.add_argument('--min_sample_overlap', dest='min_sample_overlap', type=float, help='', default=0.75, required=False)
+parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed % of SNR decrease when merge two modules, i.e. new module loses after merge no more than than 10% of SNR ', default=0.1, required=False)
+
 ### plot flag
 parser.add_argument('--plot_all', dest='plot_all', action='store_true', help='Switches on all plotting.', default=False, required=False)
 ### if verbose 
-parser.add_argument('--verbose', dest='verbose', action='store_true', help='', default=True, required=False)
+parser.add_argument('--verbose', dest='verbose', action='store_true', help='', required=False)
 ### whether rewrite temporary files
 parser.add_argument('--force', dest='force', action='store_true', help='', default=False, required=False)
 
-########################## Read input paramethers ############
+########################## Step 1. Read and check inputs ###############################################
+start_time = time.time()
+
 args = parser.parse_args()
 
-
 if args.verbose:
-    print("NetworkX version:",nx.__version__, "; must be < 2.", file = sys.stderr)
+    print("NetworkX version:",nx.__version__, "; must be < 2.", file = sys.stdout)
     
 if not args.direction in ["UP","DOWN"]:
     print("Direction of dysregulatoin must be 'UP' or 'DOWN'.", file = sys.stderr)
@@ -68,144 +71,203 @@ if not args.direction in ["UP","DOWN"]:
 if not args.method in ["RRHO","top_half"]:
     print("Method must be 'RRHO' or 'top_half'.", file = sys.stderr)
     exit(1) 
-
-# where to write the results
+    
+if args.verbose:
+    print("Expression:",args.exprs_file, 
+          "\nNetwork:",args.network_file,
+          "\n",file = sys.stdout)
+    print("alpha:",args.alpha, 
+          "\nbeta/K:",args.beta_K,
+          "\ndirection:",args.direction,
+          "\nmethod:",args.method,
+          "\nRRHO significance threshold:",args.p_val,
+          "\nmax_n_steps:",args.max_n_steps,
+          "\nn_pletau_steps:",args.n_pletau_steps,
+          "\nmax_frac_edges_oscillating:",args.max_frac_edges_oscillating,
+          "\nmin_SNR:",args.min_SNR,
+          "\nallowed_SNR_decrease:",args.allowed_SNR_decrease,
+          "\nmin_sample_overlap:",args.min_sample_overlap,
+          "\n",file = sys.stdout)
+    
+#### where to write the results ####
 # create directory if it does not exists 
 if not os.path.exists(args.out_dir) and not args.out_dir == "." :
     os.makedirs(args.out_dir)
 args.out_dir = args.out_dir + "/"
-# set output basename
+
+#### define basename for output files if not provided
 if args.basename:
     basename = args.basename
 else: 
     [date_h,mins] = str(datetime.datetime.today()).split(":")[:2]
     [date, hs] = date_h.split()
     basename = "results_"+hs+":"+mins+"_"+date 
-if args.seeds_file:
-    basename +="_r"+str(args.r)+"_T"+str(args.rwr_thr)+"."+args.method+"_"+args.direction
-else:
-    basename +="."+args.method+"_"+args.direction
-if args.verbose:
-    print("basename:", basename, file = sys.stderr)
-    
-    
-# read data files
-# seeds are optional and not used by default
-if args.seeds_file: 
-    from method import prepare_input_data, print_network_stats
-    from method import precompute_RRHO_thresholds
-    from RWR import create_subnetworks_from_seeds #calc_distanse_matrix, group_seed_genes
-    exprs, network, seeds = prepare_input_data(args.exprs_file, args.network_file, args.seeds_file, verbose = args.verbose)
-else: 
-    # read and preprocess input files: network and expressions
-    exprs, network = prepare_input_data(args.exprs_file, args.network_file, verbose = args.verbose)
 
+suffix  = ".alpha="+str(args.alpha)+",beta_K="+str(args.beta_K)+","+args.method+"_"+args.direction+",p_val="+str(args.p_val)
 if args.verbose:
-    print_network_stats(network, print_cc = True)
-    
+    print("Will save output files to:",args.out_dir,
+        "\n\tOutput prefix:", basename,
+        "\n\tOutput suffix:", suffix, file = sys.stdout)
+
+##########################  Read and preprocess input files: network (.cx or .tab) and expressions ##############################
+exprs, network = prepare_input_data(args.exprs_file, args.network_file, verbose = args.verbose)
+
+# simplifying probability calculations
+max_log_float = np.log(np.finfo(np.float64).max)
+n_exp_orders = 7 # ~1000 times 
 # define minimal number of patients in a module
-min_n_patients = int(max(10,0.1*len(exprs.columns.values))) # set to nax(10, 10% of the cohort) 
-# print("Fixed step for RRHO selected:", ,file =sys.stderr)
+min_n_samples = int(max(10,0.05*len(exprs.columns.values))) # set to max(10, 5% of the cohort) 
 if args. verbose:
-    print("Mininal number of patients in a module:",min_n_patients ,file=sys.stderr)
-          
-### Optional: RWR ###
-if  args.seeds_file:
-    if args.verbose:
-        print("Run RWR to get subnetworks around seed genes",file = sys.stderr)
-    network  = create_subnetworks_from_seeds(network,seeds,args.r,args.delta,args.rwr_thr, verbose = args.verbose)
-    # make network from a list of subnetworks
-    network = nx.compose_all(network)
-
-##### Step 1. Assign patients to edges #####
-network_with_pats_file =  args.out_dir+ basename +".network.txt"
-if not os.path.exists(network_with_pats_file):
-    # assign expression vectors on nodes 
-    network = expression_profiles2nodes(network, exprs, args.direction)
-    # RRHO - how to assign patients on edges
-    if args.method == "RRHO":
-        # set RRHO parameters
-        significance_thr=0.05
-        fixed_step = int(max(1,0.02*len(exprs.columns.values))) # 5-10-20 ~15
-        if args.verbose:
-            print("Fixed step for RRHO selected:", fixed_step, file =sys.stderr)
-        rrho_thresholds = precompute_RRHO_thresholds(exprs, fixed_step = fixed_step,significance_thr=significance_thr)
-    network = assign_patients2edges(network, method= args.method,
-                                    fixed_step=fixed_step,significance_thr=significance_thr,
-                                    rrho_thrs = rrho_thresholds)
-    if args.verbose:
-        print("Edges without any patients:",count_emtpy_edges(network, thr = 0),file= sys.stderr)
+    print("Mininal number of samples in a module:",min_n_samples ,file=sys.stdout)
 
 
-    # save the network with patients on edges 
-    save_subnetworks([network], network_with_pats_file)
-    if args.verbose:
-        print("Write network with patients to",network_with_pats_file,file= sys.stderr)
+
+### try loading data for initial state
+ini_state_file = args.out_dir+args.basename+suffix+".initial_state.pickle"
+if os.path.exists(ini_state_file):
+    [network, moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs] = load_object(ini_state_file)
+    print("Loaded initial state data from",ini_state_file,file = sys.stdout)
+    N = edge2Patients.shape[1]
+    p0 = N*np.log(0.5)+np.log(args.beta_K)
+    match_score = np.log((args.alpha*0.5+1)/(args.alpha))
+    mismatch_score = np.log((args.alpha*0.5+0)/args.alpha)
+    print("\tgenes:",len(network.nodes()),"\tsamples:",N,
+          "\n\tnon-empty edges:",len(network.edges()),file = sys.stdout)
+
 else:
-    network = load_subnetworks(network_with_pats_file, verbose = args.verbose)
-    network = nx.compose_all(network)
+    ########################## RRHO ######################
+    ### perform RRHO for every edge 
+    # first check if the network already exists
+    network_with_samples_file =  args.out_dir+ basename +"."+args.method+"_"+args.direction+",p_val="+str(args.p_val)+".network.txt"
+    if os.path.exists(network_with_samples_file):
+        network = load_network(network_with_samples_file, verbose = args.verbose)
+        print("Loaded annotated network from",network_with_samples_file,file = sys.stdout)
+        print_network_stats(network)
+    else:
+        ##### assign expression vectors on nodes 
+        network = expression_profiles2nodes(network, exprs, args.direction)
+        
+        if args.method == "RRHO":
+            # define step for RRHO
+            fixed_step = int(max(1,0.01*len(exprs.columns.values))) # 5-10-20 ~15
+            if args. verbose:
+                print("Fixed step for RRHO selected:", fixed_step, file =sys.stdout)
+            rrho_thresholds = precompute_RRHO_thresholds(exprs, fixed_step = fixed_step,significance_thr=args.p_val)
 
-plot_patient_ditsribution_and_mask_edges(network,min_n_patients=min_n_patients,title="Distribution of the number of patients over edges.", plot = False)
-if args.verbose:
-    print("edges",len(network.edges()),"edges masked (i.e. edges without patients):",count_masked_edges(network),file= sys.stderr)
 
-### Step 2. Sample module memberships ###
-# set initial model state
-# initial distribution
-if args.verbose:
-    print("Set initial conditions...",file = sys.stderr)
-edges, edgeNeighorhood, edge2module, moduleSizes,  edge2patients, nOnesPerPatientInModules = set_initial_distribution(network, exprs, basename, args.out_dir)
+        ####  assign patients on edges
+        network = assign_patients2edges(network, method= args.method,
+                                        fixed_step=fixed_step, rrho_thrs = rrho_thresholds,
+                                        verbose=args.verbose)
 
-# sampling 
-if args.verbose:
-    print("Start sampling until model convergence...",file = sys.stderr)
-edge2module_history =  sampling(edges,  edgeNeighorhood, edge2module, edge2patients,  moduleSizes,nOnesPerPatientInModules, max_n_steps=args.max_n_steps,alpha = args.alpha, beta_K = args.beta_K,min_pletau_steps = args.min_pletau_steps)
-# save intermidiate results 
-np.save(args.out_dir+basename+".edge2module_history.a="+str(args.alpha)+".b="+str(args.beta_K), edge2module_history)
-np.save(args.out_dir+basename+".edges.a="+str(args.alpha)+".b="+str(args.beta_K), edges)
+        # get rid of empty edges
+        mask_empty_edges_and_plot(network,min_n_samples=min_n_samples,
+                                  title="Distribution of samples associated with edges.",
+                                  remove=True, verbose=args.verbose, plot=args.plot_all)
 
-# get consensus
-# consensus edge-to-module membership
-if args.verbose:
-    print("Get consensus of edge memberships...",file = sys.stderr)
-consensus_edge2module = get_consensus_module_membrship(edge2module_history, edges)
+        # save the network with patients on edges 
+        save_network(network, network_with_samples_file, verbose = args.verbose)
+        if args.verbose:
+            print("Write network with samples to",network_with_samples_file,file= sys.stdout)
 
-# make moduleSizes, nOnesPerPatientInModules corresponding to consensus module mebership 
-moduleSizes, nOnesPerPatientInModules = restore_modules(consensus_edge2module,edges,network,exprs)
+###################################### Step 2. Sample module memberships ######################
 
-print("empty modules:", len([x for x in moduleSizes if x == 0]),
-      "non-empty modules:",len([x for x in moduleSizes if x != 0]), file = sys.stderr)
-if args.plot_all:
-    tmp = plt.hist(moduleSizes, bins=50, range=(1,max(moduleSizes)))
+    ##### set initial model state #######
+    if args.verbose:
+        print("Compute initial conditions...",file = sys.stdout)           
 
-# turn modules to biclusters 
+
+    moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs = set_initial_conditions(network,exprs ,verbose = args.verbose)
+
+    N = edge2Patients.shape[1]
+    p0 = N*np.log(0.5)+np.log(args.beta_K)
+    match_score = np.log((args.alpha*0.5+1)/(args.alpha))
+    mismatch_score = np.log((args.alpha*0.5+0)/args.alpha)
+
+    ### setting the initial state
+    t_0 = time.time()
+    t_1=t_0
+    for n1,n2,data in network.edges(data=True):
+        m = data['m']
+        e = data['e']
+        data['log_p'] = []
+        data['modules'] = []
+        for n in [n1,n2]:
+            for n3 in network[n].keys():
+                m2 = network[n][n3]['m']
+                if not m2 in data['modules']:
+                    lp = calc_lp(e,m,m2,edge2Patients,nOnesPerPatientInModules,moduleSizes,
+                                 edgeOneFreqs,moduleOneFreqs,alpha=args.alpha,beta_K=args.beta_K, p0=p0)
+                    data['log_p'].append(lp)
+                    data['modules'].append(m2)
+        if args.verbose and e%1000 == 0:
+            print(e,"\tedges processed",round(time.time()- t_1,1) , "s runtime",file=sys.stdout)
+            t_1 = time.time()
+    print("Set initial LPs in",round(time.time()- t_0,1) , "s", file = sys.stdout)
+
+    ### save data for initial state
+    save_object([network, moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs], ini_state_file)
+
+edge2Module_history_file = args.out_dir+args.basename+suffix+",n_steps="+str(args.max_n_steps)+",p="+str(args.n_pletau_steps)+",f="+str(args.max_frac_edges_oscillating)+".e2m_history.pickle"
+
+if os.path.exists(edge2Module_history_file) and not args.force:
+    edge2Module_history = load_object(edge2Module_history_file)
+    print("Loaded precomputed model states from",edge2Module_history_file,file = sys.stdout)
+else:
+    ### Sampling
+    edge2Module_history = sampling(network, edge2Module, edge2Patients, nOnesPerPatientInModules,
+                                       moduleSizes, edgeOneFreqs, moduleOneFreqs, p0,
+                                       alpha = args.alpha, beta_K = args.beta_K,
+                                       max_n_steps=args.max_n_steps, 
+                                       n_pletau_steps = args.n_pletau_steps,
+                                       max_frac_edges_oscillating=args.max_frac_edges_oscillating)
+
+    ### take last n_pletau_steps
+    save_object(edge2Module_history,edge2Module_history_file)
+
+# keep only states from pletau
+edge2Module_history = edge2Module_history[-args.n_pletau_steps:]
+
+
+### get consensus edge-to-module membership
+consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, edgeOneFreqs, moduleOneFreqs = get_consensus_modules(edge2Module_history, network, edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes, edgeOneFreqs, moduleOneFreqs, p0, alpha=args.alpha,beta_K=args.beta_K)
+
+print("Empty modules:", len([x for x in moduleSizes if x == 0]),
+      "\nNon-empty modules:",len([x for x in moduleSizes if x != 0]))
+
+################################## 3. Post-processing ####################################################
+### Make biclusters 
+from method import get_genes, identify_opt_sample_set, bicluster_avg_SNR
+from desmond_io import plot_bic_stats, write_modules
+from method import merge_modules, calc_new_SNR, add_bic, remove_bic
+
+T = 0.5
 bics = []
 for mid in range(0,len(moduleSizes)):
-    if moduleSizes[mid]>1:
-        genes = get_genes(mid,edge2module=consensus_edge2module,edges=edges)
-        pats, thr, avgSNR = get_opt_pat_set(nOnesPerPatientInModules[mid,], moduleSizes[mid,],
-                                            exprs, genes, min_n_patients=min_n_patients)
-        bics.append({"genes":set(genes), "patients":set(pats), "avgSNR":avgSNR,"id":mid})
+    if moduleSizes[mid]>2:
+        genes = get_genes(mid,edge2Module,network.edges())
+        samples, thr, avgSNR = identify_opt_sample_set(nOnesPerPatientInModules[mid,], moduleSizes[mid,],
+                                            exprs, genes, min_n_samples=min_n_samples,T=T)
+        bics.append({"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"id":mid})
 
-if args.plot_all:
-    plot_bic_stats(bics)
 
-#####  Step 3. Filter and merge biclusters ####
-min_SNR = 0.5
-min_patient_overlap = 0.75 # at least 75 % of candidates 
-allowed_SNR_decrease  = 0.1 # maximum allowed % of SNR decrease when merge two modules 
-# -i.e. new module loses after merge no more than 10% of SNR 
+plot_bic_stats(bics)
+print("Biclusters with > 2 genes:",len(bics))
 
+####  throw out biclusters with low avg. SNR 
 filtered_bics = []
 for bic in bics:
-    if bic["avgSNR"] > min_SNR:
-        filtered_bics.append(copy.copy(bic))
+    if bic["avgSNR"] > args.min_SNR:
+        filtered_bics.append(bic)
 plot_bic_stats(filtered_bics)
+print("biclusters after SNR filtering:",len(filtered_bics))
 
-resulting_modules = merge_modules(filtered_bics, nOnesPerPatientInModules,moduleSizes,exprs,SNRs = [],
-                              min_patient_overlap = min_patient_overlap,
-                              min_acceptable_SNR_percent=1-allowed_SNR_decrease, verbose= False)
+#### Merge remaining biclusters 
+resulting_bics = merge_modules(filtered_bics,nOnesPerPatientInModules,moduleSizes,exprs,
+                                  min_sample_overlap = args.min_sample_overlap,
+                                  min_acceptable_SNR_percent=1-args.allowed_SNR_decrease, verbose= args.verbose)
+print("biclusters after merge:",len(resulting_bics))
 
-# write to file
-file_name = args.out_dir+"/"+basename+".minSNR_"+str(min_SNR)+".modules.txt"
-write_modules(resulting_modules,file_name)
+result_file_name = args.out_dir+args.basename+suffix+",n_steps="+str(args.max_n_steps)+",p="+str(args.n_pletau_steps)+",f="+str(args.max_frac_edges_oscillating)+".biclusters.txt"
+write_modules(resulting_bics ,result_file_name)
+print("Total runtime:",round(time.time()-start_time,2),file = sys.stdout)
