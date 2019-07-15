@@ -183,7 +183,7 @@ def assign_patients2edges(subnet, method="top_half",fixed_step=10,rrho_thrs = Fa
 
 
 #### get rid of empty edges after RRHO ####
-def mask_empty_edges_and_plot(network,min_n_samples=10,title="", plot = True, remove = False, verbose = True):
+def mask_empty_edges(network,min_n_samples=10,remove = False, verbose = True):
     t_0 = time.time()
     n_pats = []
     n_masked = 0
@@ -202,14 +202,11 @@ def mask_empty_edges_and_plot(network,min_n_samples=10,title="", plot = True, re
             n_masked += 1
         else:
             n_retained += 1
-    if plot:
-        tmp = plt.hist(n_pats,bins=50)
-        tmp = plt.title(title)
     if verbose:
         print("Of total %s edges %s retained;\n%s edges containing less than %s samples were masked/removed" % 
           (n_masked+n_retained, n_retained, n_masked, min_n_samples), file=sys.stdout)
     print(round(time.time()- t_0,2) , "s runtime", file = sys.stdout)
-    
+    return network
 #################################### Gibbs Sampling #######################################################
 
 
@@ -312,28 +309,90 @@ def adjust_lp(log_probs,n_exp_orders=7):
     probs = probs/sum(probs)
     return probs
 
-def check_convergence(edge2module_history,n_edge_skip_history,
-                                n_pletau_steps = 10,max_edges_oscillating =500):
-    if len(edge2module_history) <= n_pletau_steps:
-        return False
-    else:
-        skips = n_edge_skip_history[-n_pletau_steps:]
-        #print(min(map(len,skips)) - max(map(len,skips)),map(len,skips))
-    if max(skips) > max_edges_oscillating:
-        return False
-    else:
-        if max(skips) - min(skips) <= 0.5* max_edges_oscillating: #0.1
-            return True
-    return False
+### functions for checking of convergence conditions ###
+def calc_p_transitions(states,unique,counts):
+    n_steps = len(states)-1
+    transitions = dict(zip(tuple(itertools.product(unique,unique)),np.zeros(len(unique)**2)))
+    for i in range(0,n_steps):
+        transitions[(states[i],states[i+1])] += 1 
+    p = { k:v/(counts[unique.index(k[0])]) for k, v in transitions.iteritems()}
+    return  p
 
+def collect_all_p(labels):
+    P={}
+    # calculate edge transition probabilities
+    for edge in range(0,labels.shape[1]):
+        states = labels[:,edge]
+        unique,counts = np.unique(states , return_counts=True)
+        if len(unique)> 1:
+            P[edge] = calc_p_transitions(states,list(unique),counts)
+    return P
+
+def calc_RMSD(P,P_prev):
+    t0 = time.time()
+    p_prev_edges = set(P_prev.keys())
+    p_edges = set(P.keys())
+    Pdiff = []
+    for edge in p_edges.difference(p_prev_edges):
+        P_prev[edge] = {k:0 for k in P[edge].keys()}
+        P_prev[edge] = {k:1 for k in P_prev[edge].keys() if k[0]==k[1]}
+    for edge in p_prev_edges.difference(p_edges):
+        P[edge] = {k:0 for k in P_prev[edge].keys()}
+        P[edge] = {k:1 for k in P[edge].keys() if k[0]==k[1]}
+    for edge in p_edges.intersection(p_prev_edges):
+        p_modules = set(P[edge].keys())
+        p_prev_modules = set(P_prev[edge].keys())
+        for  m,m2 in p_modules.difference(p_prev_modules):
+            Pdiff.append((P[edge][(m,m2)])**2) 
+        for  m,m2 in p_prev_modules.difference(p_modules):
+            Pdiff.append((P_prev[edge][(m,m2)])**2) 
+        for  m,m2 in p_modules.intersection(p_prev_modules):
+            Pdiff.append((P[edge][(m,m2)] - P_prev[edge][(m,m2)])**2) 
+    if not len(Pdiff)==0:
+        return np.sqrt(sum(Pdiff)/len(Pdiff))
+    else:
+        return 0
+
+def check_convergence_conditions(n_skipping_edges,n_skipping_edges_range,
+                                P_diffs,P_diffs_range,step,tol=0.05, verbose = True):
+    n_points = len(n_skipping_edges)
+    # check skipping edges 
+    se_min, se_max = n_skipping_edges_range
+    n_skipping_edges = np.array(n_skipping_edges,dtype=float)
+
+    
+    # scale
+    n_skipping_edges = (n_skipping_edges-se_min)/(se_max - se_min)*n_points
+    # fit line
+
+    A = np.vstack([range(0,n_points), np.ones(n_points)]).T
+    k,b = np.linalg.lstsq(A, n_skipping_edges, rcond=None)[0]
+    
+    # check P_diffs
+    P_diffs_min, P_diffs_max = P_diffs_range
+    P_diffs = np.array(P_diffs)
+    
+    # scale 
+    P_diffs = (P_diffs-P_diffs_min)/(P_diffs_max- P_diffs_min)*n_points
+    k2, b2  = np.linalg.lstsq(A, P_diffs, rcond=None)[0]
+    if abs(k)<tol and abs(k2)<tol:
+        convergence = True
+    else:
+        convergence = False
+    if verbose:
+        print("\tConverged:",convergence,"#skipping edges slope:",round(k,5),
+          "RMS(Pn-Pn+1) slope:",round(k2,5))
+    return convergence     
+        
 ### sample and update model when necessary 
 def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleSizes,
              edgeOneFreqs, moduleOneFreqs, p0, alpha = 0.1, beta_K = 1.0,
-             max_n_steps=100, n_pletau_steps = 30,max_frac_edges_oscillating=0.01):
+             max_n_steps=100,n_steps_averaged = 20,n_points_fit = 10,tol = 0.1,
+             n_steps_for_convergence = 5,verbose=True):
     t_ =  time.time()
-    edge2Module_history = [edge2Module]
-    n_edge_skip_history = [0]
-    max_edges_oscillating = int(max_frac_edges_oscillating*len(network.edges()))
+    edge2Module_history = [copy.copy(edge2Module)]
+    #n_edge_skip_history = [0]
+    #max_edges_oscillating = int(max_frac_edges_oscillating*len(network.edges()))
     is_converged = False
     for step in range(1,max_n_steps):
         print("step",step)
@@ -365,20 +424,55 @@ def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleS
                 t_1 = time.time()
         print("\tstep",step,1.0*not_changed_edges/len(network.edges()),"- % edges not changed;",
               "runtime",round(time.time()- t_0,1) , "s", file = sys.stdout)
-        edge2Module_history.append(edge2Module)
-        n_edge_skip_history.append(len(network.edges())-not_changed_edges)
-        # check convergence condition
-        is_converged = check_convergence(edge2Module_history,n_edge_skip_history,
-                                         n_pletau_steps = n_pletau_steps,
-                                         max_edges_oscillating = max_edges_oscillating)
-        if is_converged: # stop sampling if true 
-            print("The model converged after", step,"steps.", file = sys.stdout)
-            print("Total runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
-            return edge2Module_history[-n_pletau_steps:]
-
-    print("The model did not converge after", step,"steps.", file = sys.stdout)
-    print("Total runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
-    return edge2Module_history
+        edge2Module_history.append(copy.copy(edge2Module))
+        #n_edge_skip_history.append(len(network.edges())-not_changed_edges)
+        if step == n_steps_averaged:
+            is_converged = False
+            n_times_cc_fulfilled = 0
+            labels = np.asarray(edge2Module_history[step-n_steps_averaged:step])
+            P_prev = collect_all_p(labels)
+            P_diffs = []
+            n_skipping_edges = [] 
+            n_skipping_edges.append(len(P_prev.keys()))
+        if step > n_steps_averaged:
+            labels = np.asarray(edge2Module_history[step-n_steps_averaged:step])
+            P = collect_all_p(labels)
+            P_diff = calc_RMSD(copy.copy(P),copy.copy(P_prev))
+            P_diffs.append(P_diff)
+            n_skipping_edges.append(len(P.keys()))
+            P_prev=P
+        if  step >= n_steps_averaged + n_points_fit:
+            P_diffs_range = min(P_diffs),max(P_diffs)
+            n_skipping_edges_range= min(n_skipping_edges), max(n_skipping_edges)
+            # check convergence condition
+            is_converged = check_convergence_conditions(n_skipping_edges[-n_points_fit:],
+                                                      n_skipping_edges_range,
+                                                      P_diffs[-n_points_fit:],
+                                                      P_diffs_range,
+                                                      step,
+                                                      tol=tol,
+                                                      verbose = verbose)
+        if is_converged:
+            n_times_cc_fulfilled +=1
+        else:
+            n_times_cc_fulfilled = 0
+            
+        if n_times_cc_fulfilled == n_steps_for_convergence: # stop if convergence is True for the last n steps
+            ### define how many the last steps to consider
+            n_final_steps = n_points_fit+n_steps_for_convergence
+            if verbose:
+                print("The model converged after", step,"steps.", file = sys.stdout)
+                print("Consensus of last",n_final_steps,"states will be taken")
+                print("Total runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
+            return edge2Module_history, n_final_steps,n_skipping_edges,P_diffs
+    
+    n_final_steps = n_steps_for_convergence
+    if verbose:
+        print("The model did not converge after", step,"steps.", file = sys.stdout)
+        print("Consensus of last",n_final_steps,"states will be taken")
+        print("Total runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
+        
+    return edge2Module_history,n_final_steps,n_skipping_edges,P_diffs
 
 def apply_changes(network,n1,n2, edge_ndx,curr_module, new_module,
                   edge2Patients,edge2Module,nOnesPerPatientInModules,moduleSizes,
@@ -465,7 +559,7 @@ def get_consensus_modules(edge2module_history, network, edge2Patients, edge2Modu
             new_ndx = unique[np.argmax(counts)]
             if float(max(counts))/labels.shape[0] < 0.5: 
                 print("Warning: less than 50% of time in the most frequent module\n\tedge:",i,
-                      "counts:",counts,"\n\tlabels:" , ",".join(map(str,labels[:,i])) ,file= sys.stdout)
+                      "counts:",counts,"\n\tlabels:" , ",".join(map(str,unique)) ,file= sys.stdout)
                 # TODO: put such edges to any empty neighbouring module
             consensus_edge2module.append(new_ndx)
         else:
@@ -526,7 +620,7 @@ def bicluster_avg_SNR(samples, genes, exprs):
     return np.mean(abs(SNR))
 
 def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,
-                 min_sample_overlap = 0.5,min_acceptable_SNR_percent=0.9, verbose = True):
+                 min_sample_overlap = 0.5,min_acceptable_SNR_percent=0.9,min_n_samples=50, verbose = True):
     
     t_0 = time.time()
     
@@ -536,18 +630,15 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,
     
     ############## prepare sample overlap matrix  #########
     pat_overlap = np.zeros((len(bics),len(bics)))
-    gene_overlap = np.zeros((len(bics),len(bics)))
     for i in range(0,len(bics)):
         bic_i = bics[i]
         for j in range(0,len(bics)):
             if i !=j:
                 bic_j = bics[j]
                 shared_genes = len(bic_i["genes"].intersection(bic_j["genes"]))
-                gene_overlap[i,j] = shared_genes 
-                if shared_genes >0:
-                    shared_pats = float(len(bic_i["samples"].intersection(bic_j["samples"])))
-                    mutual_overlap = min(shared_pats/len(bic_i["samples"]),shared_pats/len(bic_j["samples"]))
-                    pat_overlap[i,j] = mutual_overlap 
+                shared_pats = float(len(bic_i["samples"].intersection(bic_j["samples"])))
+                mutual_overlap = min(shared_pats/len(bic_i["samples"]),shared_pats/len(bic_j["samples"]))
+                pat_overlap[i,j] = mutual_overlap 
     
     ############ run merging #############
     closed_modules = []
@@ -555,7 +646,7 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,
         ndx = np.argmax(SNRs)
         bic = bics[ndx]
         if verbose:
-            print("Grow module:",bic["id"],"avg.|SNR|",bic["avgSNR"], "samples",len(bic["samples"]), "genes",  bic["genes"])
+            print("Grow module:",bic["id"],"avg.|SNR|",bic["avgSNR"], "samples:",len(bic["samples"]), "genes:",  len(bic["genes"]))
         best_candidate_ndx = -1
         best_new_SNR = min_acceptable_SNR_percent*SNRs[ndx]
         best_pat_set = bic["samples"]
@@ -563,10 +654,10 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,
         for candidate_ndx in candidate_ndxs:
             bic2 = bics[candidate_ndx]
             if verbose:
-                print("\t trying module:",bic2["id"],"avg.|SNR|",bic2["avgSNR"], "samples",len(bic2["samples"]), "genes", bic2["genes"])
-            new_pats, new_SNR = calc_new_SNR(bic, bic2 ,exprs, nOnesPerPatientInModules,moduleSizes)
+                print("\t trying module:",bic2["id"],"avg.|SNR|",bic2["avgSNR"], "samples:",len(bic2["samples"]), "genes:", len(bic2["genes"]), "sample overlap:",pat_overlap[ndx,candidate_ndx])
+            new_pats, new_SNR = calc_new_SNR(bic, bic2 ,exprs, nOnesPerPatientInModules,moduleSizes,min_n_samples=min_n_samples)
             if verbose:
-                print("\t\t avg.|SNR|:",new_SNR,"passed:",new_SNR > best_new_SNR)
+                print("\t\t new avg.|SNR|:",new_SNR, "new samples",len(new_pats),"passed:",new_SNR > best_new_SNR)
             if new_SNR > best_new_SNR:
                 #print("\t\t set SNR:", best_new_SNR, "-->", new_SNR, "and select",candidate_ndx)
                 best_new_SNR = new_SNR
@@ -574,7 +665,7 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,
                 best_pat_set = new_pats
         if best_candidate_ndx >= 0:
             if verbose:
-                print("\tmerge",bic["id"],"+",bics[best_candidate_ndx]["id"], "avg.|SNR|",best_new_SNR,"samples",len(best_pat_set))
+                print("\tmerge",bic["id"],"+",bics[best_candidate_ndx]["id"], "new avg.|SNR|",best_new_SNR,"samples:",len(best_pat_set),"genes:",len(set(bic["genes"].union(set(bics[best_candidate_ndx]["genes"])))))
             # add bic2 to bic and remove bic2
             bics, SNRs, pat_overlap, nOnesPerPatientInModules, moduleSizes = add_bic(ndx, best_candidate_ndx,bics, set(best_pat_set), best_new_SNR, SNRs,pat_overlap,nOnesPerPatientInModules,moduleSizes)
             # continue - pick new ndx_max
@@ -584,7 +675,7 @@ def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,
             # close module if no candidates for merging found
             closed_modules.append(bic)
             if verbose:
-                print("----------- closed. ", bic["id"])
+                print(bic["id"],"----------- closed. ")
             # remove module from all data structures
             bics, SNRs,pat_overlap = remove_bic(ndx, bics, SNRs, pat_overlap)
     print("merging finished in",round(time.time()- t_0,2) , "s", file = sys.stdout)
@@ -632,10 +723,8 @@ def remove_bic(ndx, bics, SNRs,pat_overlap):
     return bics, SNRs,pat_overlap
 
 def calc_new_SNR(bic, bic2,exprs, nOnesPerPatientInModules,moduleSizes,min_n_samples=50):
-    mid = bic["id"]
-    mid2 = bic2["id"]
-    n_ones = nOnesPerPatientInModules[mid,]+nOnesPerPatientInModules[mid2,]
-    m_size = moduleSizes[mid,]+moduleSizes[mid2,]
-    genes  = bic["genes"] | bic2["genes"]
-    pats, thr, avgSNR = identify_opt_sample_set(n_ones, m_size, exprs, genes, min_n_samples=50)
+    n_ones = nOnesPerPatientInModules[bic["id"],]+nOnesPerPatientInModules[bic2["id"],]
+    m_size = moduleSizes[bic["id"],]+moduleSizes[bic2["id"],]
+    genes  = set(bic["genes"]).union(bic2["genes"])
+    pats, thr, avgSNR = identify_opt_sample_set(n_ones, m_size, exprs, genes, min_n_samples=min_n_samples)
     return pats, avgSNR

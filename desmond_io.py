@@ -145,8 +145,48 @@ def load_object(filename):
     print("loaded data in from file",filename,round(time.time()- t_0,1) , "s", file = sys.stdout)
     return obj
 
-def plot_bic_stats(bics):
-    plt.figure(figsize=(20,5))
+###### save modules ####################
+def write_modules(bics,file_name):
+    fopen = open(file_name,"w")
+    for bic in bics:
+        print("id:\t"+str(bic["id"]), file=fopen)
+        print("average SNR:\t"+str(bic["avgSNR"]),file=fopen)
+        print("genes:\t"+" ".join(map(str,bic["genes"])),file=fopen)
+        print("samples:\t"+" ".join(map(str,bic["samples"])),file=fopen)
+    fopen.close()
+    print(str(len(bics)),"modules written to",file_name,file = sys.stdout)
+    
+    
+### plots numnber of oscilating edges and RMS(Pn-Pn+1)
+def plot_convergence(n_skipping_edges,P_diffs, thr_step,n_steps_averaged, outfile = ""):
+    steps = range(n_steps_averaged,n_steps_averaged+len(n_skipping_edges))
+    fig, axarr = plt.subplots(2, 1,sharex=True, figsize=(15,7))
+    axarr[0].set_title("Model convergence")
+    axarr[0].plot(steps, n_skipping_edges,'b.-')
+    axarr[0].axvline(thr_step,color="red",linestyle='--') 
+    axarr[0].set_ylabel("# edges oscilating on the last "+str(int(n_steps_averaged))+" steps")
+    steps = range(n_steps_averaged,n_steps_averaged+len(P_diffs))
+    axarr[1].plot(steps,P_diffs,'b.-' )
+    axarr[1].set_xlabel('step')
+    axarr[1].axvline(thr_step,color="red",linestyle='--') 
+    tmp = axarr[1].set_ylabel("RMS(Pn-Pn+1)")
+    if outfile:
+        plt.savefig(outfile, transparent=True)
+
+### plots the distribution of number of samples over all populated edges          
+def plot_edge2sample_dist(network,outfile):
+    n_pats = []
+    for edge in network.edges():
+        n1,n2 = edge
+        pats = len(network[n1][n2]["patients"])
+        n_pats.append(pats)
+        # mask edges with not enough patients 
+    tmp = plt.hist(n_pats,bins=50)
+    tmp = plt.title("Distribution of samples associated with edges.")
+    plt.savefig(outfile, transparent=True)
+    
+def plot_bic_stats(bics, outfile):
+    tmp = plt.figure(figsize=(20,5))
     i = 1
     for var in ["genes", "samples"]:
         vals = []
@@ -162,14 +202,4 @@ def plot_bic_stats(bics):
         vals.append(bic["avgSNR"])
     tmp = plt.hist(vals, bins=50)
     tmp = plt.title("avg. |SNR|")
-
-###### save modules ####################
-def write_modules(bics,file_name):
-    fopen = open(file_name,"w")
-    for bic in bics:
-        print("id:\t"+str(bic["id"]), file=fopen)
-        print("average SNR:\t"+str(bic["avgSNR"]),file=fopen)
-        print("genes:\t"+" ".join(map(str,bic["genes"])),file=fopen)
-        print("samples:\t"+" ".join(map(str,bic["samples"])),file=fopen)
-    fopen.close()
-    print(str(len(bics)),"modules written to",file_name,file = sys.stdout)
+    plt.savefig(outfile, transparent=True)

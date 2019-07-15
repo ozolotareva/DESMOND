@@ -20,14 +20,9 @@ import pickle
 
 sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
 
-from desmond_io import prepare_input_data, print_network_stats
-from desmond_io import save_network, load_network
-from method import precompute_RRHO_thresholds,  expression_profiles2nodes, assign_patients2edges, mask_empty_edges_and_plot
-
-from method import set_initial_conditions, calc_lp, calc_norm_coef 
-from desmond_io import save_object, load_object
-from method import sampling, check_convergence,apply_changes
+from desmond_io import prepare_input_data, save_object, load_object
 from method import get_consensus_modules
+
 
 parser = argparse.ArgumentParser(description="""Searches for genes differentially expressed in an unknown subgroup of samples.""" , formatter_class=argparse.RawTextHelpFormatter)
 
@@ -42,15 +37,15 @@ parser.add_argument('--alpha', dest='alpha', type=float, help='Alpha.', default=
 parser.add_argument('--beta_K', dest='beta_K', type=float, help='Beta/K.', default=1.0, required=False)
 parser.add_argument('--p_val', dest='p_val', type=float, help='Significance threshold for RRHO method.', default=0.05, required=False)
 parser.add_argument('--max_n_steps', dest='max_n_steps', type=int, help='Maximal number of steps.', default=50, required=False)
-parser.add_argument('--n_pletau_steps', dest='n_pletau_steps', type=int, help='Number of steps satisfying pletau condition.', default=20, required=False)
-parser.add_argument('--max_frac_edges_oscillating', dest='max_frac_edges_oscillating', type=float, help='Maximal fraction of oscilating edges allowed during last min_pletau_steps to satisfy convergense condition.', default=0.01, required=False)
+parser.add_argument('--n_steps_averaged', dest='n_steps_averaged', type=int, help='Number of last steps analyzed when checking convergence condition. Values less than 10 are not recommended.', default=20, required=False)
+parser.add_argument('--n_steps_for_convergence', dest='n_steps_for_convergence', type=int, help='Required number of steps when convergence conditions is satisfied.', default=5, required=False)
 ### merging and filtering parameters
 parser.add_argument('--min_SNR', dest='min_SNR', type=float, help='SNR threshold for biclusters to consider.', default=0.5, required=False)
-parser.add_argument('--min_sample_overlap', dest='min_sample_overlap', type=float, help='', default=0.75, required=False)
-parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed % of SNR decrease when merge two modules, i.e. new module loses after merge no more than than 10% of SNR ', default=0.1, required=False)
+parser.add_argument('--min_sample_overlap', dest='min_sample_overlap', type=float, help='', default=0.5, required=False)
+parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed % of SNR decrease when merge two modules, i.e. new module loses after merge no more than than 10% of SNR ', default=0.3, required=False)
 
 ### plot flag
-parser.add_argument('--plot_all', dest='plot_all', action='store_true', help='Switches on all plotting.', default=False, required=False)
+parser.add_argument('--plot_all', dest='plot_all', action='store_true', help='Switches on all plotting.', required=False)
 ### if verbose 
 parser.add_argument('--verbose', dest='verbose', action='store_true', help='', required=False)
 ### whether rewrite temporary files
@@ -82,8 +77,8 @@ if args.verbose:
           "\nmethod:",args.method,
           "\nRRHO significance threshold:",args.p_val,
           "\nmax_n_steps:",args.max_n_steps,
-          "\nn_pletau_steps:",args.n_pletau_steps,
-          "\nmax_frac_edges_oscillating:",args.max_frac_edges_oscillating,
+          "\nn_steps_averaged:",args.n_steps_averaged,
+          "\nn_steps_for_convergence:",args.n_steps_for_convergence,
           "\nmin_SNR:",args.min_SNR,
           "\nallowed_SNR_decrease:",args.allowed_SNR_decrease,
           "\nmin_sample_overlap:",args.min_sample_overlap,
@@ -125,6 +120,9 @@ if args. verbose:
 ### try loading data for initial state
 ini_state_file = args.out_dir+args.basename+suffix+".initial_state.pickle"
 if os.path.exists(ini_state_file):
+    
+    from desmond_io import load_object
+    
     [network, moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs] = load_object(ini_state_file)
     print("Loaded initial state data from",ini_state_file,file = sys.stdout)
     N = edge2Patients.shape[1]
@@ -140,10 +138,13 @@ else:
     # first check if the network already exists
     network_with_samples_file =  args.out_dir+ basename +"."+args.method+"_"+args.direction+",p_val="+str(args.p_val)+".network.txt"
     if os.path.exists(network_with_samples_file):
+        from desmond_io import print_network_stats,load_network
         network = load_network(network_with_samples_file, verbose = args.verbose)
         print("Loaded annotated network from",network_with_samples_file,file = sys.stdout)
         print_network_stats(network)
     else:
+        from method import precompute_RRHO_thresholds,  expression_profiles2nodes, assign_patients2edges, mask_empty_edges
+        from desmond_io import save_network
         ##### assign expression vectors on nodes 
         network = expression_profiles2nodes(network, exprs, args.direction)
         
@@ -153,17 +154,18 @@ else:
             if args. verbose:
                 print("Fixed step for RRHO selected:", fixed_step, file =sys.stdout)
             rrho_thresholds = precompute_RRHO_thresholds(exprs, fixed_step = fixed_step,significance_thr=args.p_val)
-
-
+            
         ####  assign patients on edges
         network = assign_patients2edges(network, method= args.method,
                                         fixed_step=fixed_step, rrho_thrs = rrho_thresholds,
                                         verbose=args.verbose)
 
         # get rid of empty edges
-        mask_empty_edges_and_plot(network,min_n_samples=min_n_samples,
-                                  title="Distribution of samples associated with edges.",
-                                  remove=True, verbose=args.verbose, plot=args.plot_all)
+        network = mask_empty_edges(network,min_n_samples=min_n_samples,remove=True, verbose=args.verbose)
+        if args.plot_all:
+            from desmond_io import plot_edge2sample_dist
+            plot_outfile=args.out_dir + args.basename +suffix+".n_samples_on_edges.svg"
+            plot_edge2sample_dist(network,plot_outfile)
 
         # save the network with patients on edges 
         save_network(network, network_with_samples_file, verbose = args.verbose)
@@ -173,10 +175,11 @@ else:
 ###################################### Step 2. Sample module memberships ######################
 
     ##### set initial model state #######
+    from method import set_initial_conditions, calc_lp, calc_norm_coef 
+    
     if args.verbose:
         print("Compute initial conditions...",file = sys.stdout)           
-
-
+    
     moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs = set_initial_conditions(network,exprs ,verbose = args.verbose)
 
     N = edge2Patients.shape[1]
@@ -208,26 +211,27 @@ else:
     ### save data for initial state
     save_object([network, moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs], ini_state_file)
 
-edge2Module_history_file = args.out_dir+args.basename+suffix+",n_steps="+str(args.max_n_steps)+",p="+str(args.n_pletau_steps)+",f="+str(args.max_frac_edges_oscillating)+".e2m_history.pickle"
+edge2Module_history_file = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".e2m_history.pickle"
 
 if os.path.exists(edge2Module_history_file) and not args.force:
-    edge2Module_history = load_object(edge2Module_history_file)
+    [edge2Module_history,n_final_steps,n_skipping_edges,P_diffs] = load_object(edge2Module_history_file)
     print("Loaded precomputed model states from",edge2Module_history_file,file = sys.stdout)
+    print("Will build consensus of the last",n_final_steps,"states.",file = sys.stdout)
 else:
     ### Sampling
-    edge2Module_history = sampling(network, edge2Module, edge2Patients, nOnesPerPatientInModules,
-                                       moduleSizes, edgeOneFreqs, moduleOneFreqs, p0,
-                                       alpha = args.alpha, beta_K = args.beta_K,
-                                       max_n_steps=args.max_n_steps, 
-                                       n_pletau_steps = args.n_pletau_steps,
-                                       max_frac_edges_oscillating=args.max_frac_edges_oscillating)
+    from method import sampling# check_convergence, check_convergence_conditions, apply_changes
+    edge2Module_history,n_final_steps,n_skipping_edges,P_diffs = sampling(network, edge2Module, edge2Patients, nOnesPerPatientInModules,moduleSizes, edgeOneFreqs, moduleOneFreqs, p0, alpha = args.alpha, beta_K = args.beta_K, max_n_steps=args.max_n_steps, n_steps_averaged = args.n_steps_averaged, n_points_fit = 10, tol = 0.1, n_steps_for_convergence = args.n_steps_for_convergence, verbose=args.verbose)
+    # save full edge2Module history
+    save_object([edge2Module_history,n_final_steps,n_skipping_edges,P_diffs],edge2Module_history_file)
 
-    ### take last n_pletau_steps
-    save_object(edge2Module_history,edge2Module_history_file)
 
-# keep only states from pletau
-edge2Module_history = edge2Module_history[-args.n_pletau_steps:]
-
+if args.plot_all:
+    from desmond_io import plot_convergence
+    plot_outfile = args.out_dir + args.basename +suffix+",ns_max=" + str(args.max_n_steps)+ ",ns_avg=" + str(args.n_steps_averaged) + ",ns_c="+str(args.n_steps_for_convergence) + ".convergence.svg"
+    plot_convergence(n_skipping_edges, P_diffs,len(edge2Module_history)-n_final_steps,
+                     args.n_steps_averaged, outfile=plot_outfile)
+### take the last (n_points_fit+n_steps_for_convergence) steps
+edge2Module_history = edge2Module_history[-n_final_steps:]
 
 ### get consensus edge-to-module membership
 consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, edgeOneFreqs, moduleOneFreqs = get_consensus_modules(edge2Module_history, network, edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes, edgeOneFreqs, moduleOneFreqs, p0, alpha=args.alpha,beta_K=args.beta_K)
@@ -238,7 +242,7 @@ print("Empty modules:", len([x for x in moduleSizes if x == 0]),
 ################################## 3. Post-processing ####################################################
 ### Make biclusters 
 from method import get_genes, identify_opt_sample_set, bicluster_avg_SNR
-from desmond_io import plot_bic_stats, write_modules
+from desmond_io import write_modules
 from method import merge_modules, calc_new_SNR, add_bic, remove_bic
 
 T = 0.5
@@ -251,23 +255,29 @@ for mid in range(0,len(moduleSizes)):
         bics.append({"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"id":mid})
 
 
-plot_bic_stats(bics)
-print("Biclusters with > 2 genes:",len(bics))
+print("Biclusters with > 2 genes:",len(bics), file = sys.stdout)
 
 ####  throw out biclusters with low avg. SNR 
 filtered_bics = []
 for bic in bics:
     if bic["avgSNR"] > args.min_SNR:
         filtered_bics.append(bic)
-plot_bic_stats(filtered_bics)
-print("biclusters after SNR filtering:",len(filtered_bics))
+        
+print("biclusters after SNR filtering:",len(filtered_bics), file=sys.stdout)
 
 #### Merge remaining biclusters 
 resulting_bics = merge_modules(filtered_bics,nOnesPerPatientInModules,moduleSizes,exprs,
-                                  min_sample_overlap = args.min_sample_overlap,
-                                  min_acceptable_SNR_percent=1-args.allowed_SNR_decrease, verbose= args.verbose)
+                               min_sample_overlap = args.min_sample_overlap,
+                               min_acceptable_SNR_percent=1-args.allowed_SNR_decrease,
+                               min_n_samples=min_n_samples, verbose= args.verbose)
 print("biclusters after merge:",len(resulting_bics))
 
-result_file_name = args.out_dir+args.basename+suffix+",n_steps="+str(args.max_n_steps)+",p="+str(args.n_pletau_steps)+",f="+str(args.max_frac_edges_oscillating)+".biclusters.txt"
+result_file_name = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".biclusters.txt"
+
+if args.plot_all:
+    from desmond_io import plot_bic_stats
+    plot_outfile = args.out_dir + args.basename + suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".bicluster_stats.svg"
+    plot_bic_stats(bics,plot_outfile)
+
 write_modules(resulting_bics ,result_file_name)
 print("Total runtime:",round(time.time()-start_time,2),file = sys.stdout)
