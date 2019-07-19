@@ -29,21 +29,21 @@ def implant_biclusters(df,genes_per_bic=5,pats_per_bic=10,max_n_bics=1,bic_media
     if g_overlap == False:
         if p_overlap== False:
             n_bics = min(len(bg_g)/genes_per_bic,len(bg_p)/pats_per_bic,max_n_bics)
-            fname_ext = ".ovelap=FF"
+            fname_ext = ".overlap=FF"
             bicluster_kind = "with no overlap"
         else:
             n_bics = min(len(bg_g)/genes_per_bic,max_n_bics)
-            fname_ext = ".ovelap=FT"
-            bicluster_kind = "with patient overlap"
+            fname_ext = ".overlap=FT"
+            bicluster_kind = "with sample overlap"
     else:
         if p_overlap== False:
             n_bics = min(len(bg_p)/pats_per_bic,max_n_bics)
-            fname_ext = ".ovelap=TF"
+            fname_ext = ".overlap=TF"
             bicluster_kind = "with gene overlap"
         else:
             n_bics =max_n_bics
-            fname_ext = ".ovelap=TT"
-            bicluster_kind = "gene and patient overlap"
+            fname_ext = ".overlap=TT"
+            bicluster_kind = "gene and sample overlap"
             
     if n_bics != max_n_bics:
         print("Will create %s biclusters with %s instead of %s"%(n_bics, bicluster_kind, max_n_bics),file=sys.stderr)
@@ -52,24 +52,24 @@ def implant_biclusters(df,genes_per_bic=5,pats_per_bic=10,max_n_bics=1,bic_media
     
     biclusters = []
 
-    # make patient annotation table
+    # make samples annotation table
     anno = pd.DataFrame(index=map(lambda x : "bic"+str(x),range(0,n_bics)),
                         columns=df.columns.values,data=0).T
-    anno.index.name = "patients2biclusters"
-    # make patient annotation table
+    anno.index.name = "samples2biclusters"
+    # make samples annotation table
     anno_g = pd.DataFrame(index=map(lambda x : "bic"+str(x),range(0,n_bics)),
                         columns=df.index.values,data=0).T
     anno_g.index.name = "genes2biclusters"
 
 
     for bc in range(0,n_bics):
-        # select random sets of patients and genes from the background
+        # select random sets of samples and genes from the background
         genes  = list(np.random.choice(list(bg_g),size=genes_per_bic,replace=False))
         pats = list(np.random.choice(list(bg_p),size=pats_per_bic,replace=False))
-        biclusters.append({"genes":genes, "patients":pats})
+        biclusters.append({"genes":genes, "samples":pats})
         bic_g+=genes
         bic_p+=pats
-        # identify patients outside the bicluster
+        # identify samples outside the bicluster
         if not g_overlap:
             bg_g = bg_g.difference(set(bic_g))
         if not p_overlap:
@@ -83,7 +83,7 @@ def implant_biclusters(df,genes_per_bic=5,pats_per_bic=10,max_n_bics=1,bic_media
 
         #implant the bicluster
         df.loc[genes,pats] = df_bic
-        df.index.name = "genes_patients"
+        df.index.name = "genes_samples"
 
         # add record to annotation
         anno.loc[pats,"bic"+str(bc)] = 1
@@ -103,9 +103,9 @@ def implant_biclusters(df,genes_per_bic=5,pats_per_bic=10,max_n_bics=1,bic_media
         fopen = open(outdir+"/true_biclusters/"+filename+".biclusters.txt","w")
         i=0
         for bic in biclusters:
-            print("bic:",i,file=fopen)
+            print("id:"+"\t"+str(i),file=fopen)
             print("genes:","\t".join(map(str,bic["genes"])),file=fopen)
-            print("patients:","\t".join(map(str,bic["patients"])),file=fopen)
+            print("samples:","\t".join(map(str,bic["samples"])),file=fopen)
             i+=1
         fopen.close()
     return df, biclusters,anno_g,filename
