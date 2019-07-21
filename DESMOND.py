@@ -250,7 +250,7 @@ bics = []
 for mid in range(0,len(moduleSizes)):
     if moduleSizes[mid]>2:
         genes = get_genes(mid,edge2Module,network.edges())
-        samples, thr, avgSNR = identify_opt_sample_set(nOnesPerPatientInModules[mid,], moduleSizes[mid,],
+        samples, thr, avgSNR = identify_opt_sample_set(nOnesPerPatientInModules[mid,],
                                             exprs, genes, min_n_samples=min_n_samples,T=T)
         bics.append({"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"id":mid})
 
