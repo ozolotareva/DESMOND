@@ -72,7 +72,11 @@ def read_all_results(parameters,tool_name,n_runs=10,
                         files_empty +=1
                         runs = False
                     else:
-                        runs = parse_biclust(pred_bic_dir+params_folder+"/" + pred_bic_fname, n_runs = n_runs)
+                        try:
+                            runs = parse_biclust(pred_bic_dir+params_folder+"/" + pred_bic_fname, n_runs = n_runs)
+                        except:
+                            runs = False
+                            print("Failed to parse",pred_bic_dir+params_folder+"/" + pred_bic_fname)
                     if not runs:
                         for run in range(1,n_runs+1):
                             d = {"n_run":run,"F1-like":0,"n_genes":n_genes,"n_samples":n_samples}
@@ -98,7 +102,6 @@ def read_all_results(parameters,tool_name,n_runs=10,
     print("Total runs",results.shape[0])
     print("Non-zero runs:",results.loc[results["F1-like"]>0,:].shape[0])
     return results 
-
 
 def parse_biclust(bic_file_path, n_runs = 10):
     runs = []
@@ -148,20 +151,29 @@ def parse_biclust(bic_file_path, n_runs = 10):
                     else:
                         bic["genes"] = set([])
                         if bic["n_samples"]>0:
-                            bic["samples"]=set(line)
+                            if len(line) > 0:
+                                bic["samples"]=set(line)
+                                bics.append(bic)
+                                i=0
+                            else:
+                                i+=1
                         else:
                             bic["samples"]=set([])
-                        bics.append(bic)
-                        i=0
+                            bics.append(bic)
+                            if len(line) > 0:
+                                i=0
+                            else:
+                                i+=1
                 else:
                     bic["samples"]=set(line)
                     bics.append(bic)
                     i=0
     runs.append(bics)
-    for run in range(prev_n_run+1,n_runs+1):
-        runs.append([{"id":bic_id ,"run":run,"genes":set([]),"samples":set([]),
-                                      "n_genes":0,"n_samples":0}])
-        bic_id +=1
+    if n_runs > 1:
+        for run in range(prev_n_run+1,n_runs+1):
+            runs.append([{"id":bic_id ,"run":run,"genes":set([]),"samples":set([]),
+                                          "n_genes":0,"n_samples":0}])
+            bic_id +=1
     if len(runs)!=n_runs:
         print("Warining:  %s runs found in file %s instead of %s expected" %(len(runs),bic_file_path,n_runs ))
     return runs
