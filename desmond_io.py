@@ -4,6 +4,7 @@ import pandas as pd
 import networkx as nx
 import pickle
 
+
 import time
 
 import matplotlib
@@ -175,13 +176,13 @@ def plot_convergence(n_skipping_edges,P_diffs, thr_step,n_steps_averaged, outfil
 
 ### plots the distribution of number of samples over all populated edges          
 def plot_edge2sample_dist(network,outfile):
-    n_pats = []
+    n_samples = []
     for edge in network.edges():
         n1,n2 = edge
-        pats = len(network[n1][n2]["patients"])
-        n_pats.append(pats)
-        # mask edges with not enough patients 
-    tmp = plt.hist(n_pats,bins=50)
+        samples = len(network[n1][n2]["patients"])
+        n_samples.append(samples)
+        # mask edges with not enough samples
+    tmp = plt.hist(n_samples,bins=50)
     tmp = plt.title("Distribution of samples associated with edges.")
     plt.savefig(outfile, transparent=True)
     
@@ -203,3 +204,4 @@ def plot_bic_stats(bics, outfile):
     tmp = plt.hist(vals, bins=50)
     tmp = plt.title("avg. |SNR|")
     plt.savefig(outfile, transparent=True)
+    

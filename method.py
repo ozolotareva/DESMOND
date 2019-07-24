@@ -583,18 +583,18 @@ def get_consensus_modules(edge2module_history, network, edge2Patients, edge2Modu
     return consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, edgeOneFreqs, moduleOneFreqs
 
 ################################## 3. Post-processing ##########################################
-def identify_opt_sample_set(n_ones, m_size, exprs,genes, min_n_samples=50,T=0.5):
+def identify_opt_sample_set(n_ones, exprs,genes, min_n_samples=50,T=0.5):
     best_sample_set = []
     best_SNR = 0
     best_thr = -1
-    freq_ones = 1.0*n_ones/m_size
+    freq_ones = 1.0*n_ones/len(genes)
     thresholds = sorted(list(set(freq_ones)),reverse=True)[:-1]
     thresholds =  [x for x in thresholds if x >= T]
     for thr in thresholds:
         ndx = np.where(freq_ones >= thr)[0]
         samples = exprs.iloc[:,ndx].columns.values
         if len(samples) > min_n_samples:
-            avgSNR =  bicluster_avg_SNR(samples, genes, exprs)
+            avgSNR =  bicluster_avg_SNR(exprs,genes=genes,samples=samples)
             if avgSNR > best_SNR: 
                 best_SNR = avgSNR 
                 best_sample_set = samples
@@ -611,7 +611,7 @@ def get_genes(mid,edge2module,edges):
     return genes
 
 
-def bicluster_avg_SNR(samples, genes, exprs):
+def bicluster_avg_SNR(exprs,genes=[],samples=[]):
     mat = exprs.loc[genes, :]
     all_samples = set(mat.columns.values)
     bic= mat.loc[:, samples]
@@ -726,5 +726,19 @@ def calc_new_SNR(bic, bic2,exprs, nOnesPerPatientInModules,moduleSizes,min_n_sam
     n_ones = nOnesPerPatientInModules[bic["id"],]+nOnesPerPatientInModules[bic2["id"],]
     m_size = moduleSizes[bic["id"],]+moduleSizes[bic2["id"],]
     genes  = set(bic["genes"]).union(bic2["genes"])
-    pats, thr, avgSNR = identify_opt_sample_set(n_ones, m_size, exprs, genes, min_n_samples=min_n_samples)
+    pats, thr, avgSNR = identify_opt_sample_set(n_ones, exprs, genes, min_n_samples=min_n_samples)
     return pats, avgSNR
+
+#### evaluation ### 
+def bicluster_corrs(exprs,genes=[],samples=[]):
+    if len(samples) > 0 :
+        mat = exprs.loc[genes,samples]
+    else:
+        mat = exprs.loc[genes, :]
+    corrs  = []
+    for g1,g2 in itertools.combinations(genes,2):
+        corr = np.corrcoef(mat.loc[g1,:].values, mat.loc[g2].values)[0][1]
+        corrs.append(corr)
+    return round(np.average(corrs),2), round(np.min(corrs),2), round(np.max(corrs),2)
+
+
