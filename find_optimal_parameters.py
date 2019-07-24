@@ -45,18 +45,27 @@ def read_all_results(parameters,tool_name,n_runs=10,
             true_bic_fname = true_bic_fname_prefix+str(n_genes)+","+str(n_samples)+true_bic_fname_suffix 
             true_bics = read_true_bics(true_bic_dir+true_bic_fname)
             true_biclusters[(n_genes,n_samples)] =  true_bics
+
     # generate parameter combinations:
     params = []
-    product_target = []
-    for param in parameters:
-        params.append(param[0])
-        product_target.append(param[1])
-
+    param_combinations = []
+    if len(parameters) > 1:
+        product_target = []
+        for param in parameters:
+            params.append(param[0])
+            product_target.append(param[1])
+        
+        for param_combination in product(*product_target):
+            param_combination = zip(params,param_combination)
+            params_folder = ".".join(map(lambda x: x[0]+"="+str(x[1]),param_combination))
+            param_combinations.append((param_combination, params_folder))
+    else:
+        params = [parameters[0][0]]
+        for p in parameters[0][1]:
+            params_folder = params[0]+"="+str(p)
+            param_combinations.append(([(params[0],p)], params_folder))
     
-    for param_combination in product(*product_target):
-        param_combination = zip(params,param_combination)
-        params_folder = ".".join(map(lambda x: x[0]+"="+str(x[1]),param_combination))
-    
+    for param_combination, params_folder in param_combinations:
         if not os.path.exists(pred_bic_dir+params_folder+"/"):
             print(pred_bic_dir+params_folder+"/","does not found.")
             failed_param_combinations += 1
@@ -262,7 +271,10 @@ def get_opt_params(results, params, more_n_smaples = 0, default_params = None, v
         std = round(r.head(1).loc[:,("F1-like","std")].values[0],3)
         print("Max. avg. F1:"+str(m)+u"\u00B1"+str(std))
         print("\nparameters:")
-        for p in zip(params, r.head(1).index.values[0]):
+        param_values =  r.head(1).index.values[0]
+        if not hasattr(param_values, '__iter__'): # this is for single parameter tuning
+            param_values = [param_values]
+        for p in zip(params,param_values):
             print("\t"+p[0]+"="+str(p[1])+";")
         if default_params:
             m_def = round(r.loc[default_params,("F1-like","mean")],3)
