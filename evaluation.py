@@ -85,21 +85,21 @@ def find_opt_SNR_threshold(exprs,gene_dict,pat_dict,g_clust):
                 best_pat_set = set(pats)
     return best_pat_set, best_SNR
 
-def read_DESMOND(file_name):
+def read_DESMOND(file_name,delim=" ",genes2ints=False):
     bics = []
     with open(file_name,"r") as infile:
         for line in infile.readlines():
             line =line.rstrip().split("\t")
             if line[0] == "id:":
-                bic = {}
+                bic = {"id":int(line[1])}
             if line[0] == "average SNR:":
                 bic["avgSNR"] = float(line[1])
             if line[0] == "genes:":
-                bic["genes"] = set(line[1].split(" "))
-            if line[0] == "patients:":
-                bic["patients"] = set(line[1].split(" "))
+                bic["genes"] = set(line[1].split(delim))
+            if line[0] == "samples:":
+                bic["samples"] = set(line[1].split(delim))
                 bics.append(bic)
-        return bics
+    return bics
 
 ########## Plotting bicluster statistics  ##############
 def plot_n_bics(methods_dict,methods = [],datasets = ["TCGA-RNAseq","TCGA-micro", "METABRIC"],colors = ['blue','lightblue','lightgreen'],barWidth = 0.2):
@@ -127,7 +127,7 @@ def plot_n_bics(methods_dict,methods = [],datasets = ["TCGA-RNAseq","TCGA-micro"
     plt.ylabel('modules')
     plt.legend()
 
-def plot_distributions(methods_dict, methods = [],what="patients", how="size",
+def plot_distributions(methods_dict, methods = [],what="samples", how="size",
                             datasets = ["TCGA-RNAseq","TCGA-micro", "METABRIC"],
                             colors = ['blue','lightblue','lightgreen'],
                             boxWidth = 0.2, y_lim = False, no_legend = True):
@@ -161,7 +161,7 @@ def plot_distributions(methods_dict, methods = [],what="patients", how="size",
     elif how == "dist":
         plt.title(what+' per module')
 
-def plot_size_distributions(methods_dict, methods = [],what="patients",
+def plot_size_distributions(methods_dict, methods = [],what="samples",
                             datasets = ["TCGA-RNAseq","TCGA-micro", "METABRIC"],
                             colors = ['blue','lightblue','lightgreen'],
                             boxWidth = 0.2, y_lim = 2000):
