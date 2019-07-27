@@ -17,6 +17,7 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
 ### Usage example
 
 | Disclaimer:  the method is still under development  and is not properly tested |
+|---|
 
 ```
 python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
