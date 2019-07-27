@@ -1,7 +1,6 @@
 # DESMOND
 
-DESMOND is a method for identification of **D**ifferentially **E**xpre**S**sed gene **MO**dules i**
-N** **D**iseases. 
+DESMOND is a method for identification of **D**ifferentially **E**xpre**S**sed gene **MO**dules i**N** **D**iseases. 
 
 DESMOND accepts gene expression matrix and gene interaction network and identifies connected sets of genes up- or down-regulated in subsets of samples.
 
@@ -13,7 +12,7 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
  * a matrix of normalized gene expressions; first row and column contain gene and sample names respectively
  * a network of gene interactions; list of edges in a format gene1\tgene2 or network in NDEx format https://home.ndexbio.org/about-ndex/
  
-### Usage example:
+### Usage example
 
 ```
 python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
@@ -21,6 +20,7 @@ python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out
 --verbose --plot_all
 
 ```
-### Output:
-
-### TODO:
+### Output
+ * \*.biclusters.txt - list of identified biclusters
+ * \*.convergence.svg - model convergence plot 
+ * \*.initial_state.pickle, \*.network.txt, \*.e2m_history.pickle - temporary files
