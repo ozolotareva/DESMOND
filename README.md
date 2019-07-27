@@ -16,7 +16,7 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
  
 ### Usage example
 
-| ![#f03c15] Disclaimer:  the method is still under development  and is not properly tested `#f03c15`|
+|- Disclaimer:  the method is still under development  and is not properly tested |
 |---|
 
 ```
