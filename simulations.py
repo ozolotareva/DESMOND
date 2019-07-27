@@ -103,9 +103,9 @@ def implant_biclusters(df,genes_per_bic=5,pats_per_bic=10,max_n_bics=1,bic_media
         fopen = open(outdir+"/true_biclusters/"+filename+".biclusters.txt","w")
         i=0
         for bic in biclusters:
-            print("id:"+" "+str(i),file=fopen)
-            print("genes:"," ".join(map(str,bic["genes"])),file=fopen)
-            print("samples:"," ".join(map(str,bic["samples"])),file=fopen)
+            print("id:\t"+str(i),file=fopen)
+            print("genes:\t"+" ".join(map(str,bic["genes"])),file=fopen)
+            print("samples:\t"+" ".join(map(str,bic["samples"])),file=fopen)
             i+=1
         fopen.close()
     return df, biclusters,anno_g,filename
