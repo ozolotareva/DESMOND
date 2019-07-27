@@ -7,12 +7,16 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
 ![alt text](https://github.com/ozolotareva/DESMOND/blob/master/poster/DESMOND_abstract.png)
 
 
+
+
 ### Input
 
  * matrix of normalized gene expressions; first row and column contain gene and sample names respectively
  * network of gene interactions; list of edges in a format gene1\tgene2 or network in NDEx format https://home.ndexbio.org/about-ndex/
  
 ### Usage example
+
+| WARNING: Disclaimer:  the method is still under development  and is not properly tested |
 
 ```
 python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
