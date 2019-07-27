@@ -24,13 +24,15 @@ from desmond_io import prepare_input_data, save_object, load_object
 from method import get_consensus_modules
 
 
-parser = argparse.ArgumentParser(description="""Searches for genes differentially expressed in an unknown subgroup of samples.""" , formatter_class=argparse.RawTextHelpFormatter)
+parser = argparse.ArgumentParser(description="""Searches for gene sets differentially expressed in an unknown subgroup of samples and connected in the network.""" , formatter_class=argparse.RawTextHelpFormatter)
+
 
 parser.add_argument('-e','--exprs', dest='exprs_file', type=str, help='Expression matrix with sample name in columns and gene in rows, tab-separated.', default='', required=True,metavar='exprs_zscores.tsv')
 parser.add_argument('-n','--network', dest='network_file', type=str, help='Network in tab or NDEX2 format.', default='', required=True, metavar='network.cx')
 parser.add_argument('-d','--direction', dest='direction', type=str, help='Direction of dysregulation: UP or DOWN', default='UP', required=False)
 parser.add_argument('-m','--method', dest='method', type=str, help='How to assign patients on edges: RHHO or top_halves', default='RRHO', required=False)
 parser.add_argument('-basename','--basename', dest='basename', type=str, help='Output basename without extention. If no outfile name provided output will be set "results_hh:mm_dddd-mm-yy".', default='', required=False)
+
 parser.add_argument('-o','--out_dir', dest='out_dir', type=str, help='Output directory.', default='.', required=False)
 ### sampling parameters ###
 parser.add_argument('--alpha', dest='alpha', type=float, help='Alpha.', default=0.1, required=False)
@@ -42,12 +44,13 @@ parser.add_argument('--n_steps_for_convergence', dest='n_steps_for_convergence',
 ### merging and filtering parameters
 parser.add_argument('--min_SNR', dest='min_SNR', type=float, help='SNR threshold for biclusters to consider.', default=0.5, required=False)
 parser.add_argument('--min_sample_overlap', dest='min_sample_overlap', type=float, help='', default=0.5, required=False)
-parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed % of SNR decrease when merge two modules, i.e. new module loses after merge no more than than 10% of SNR ', default=0.3, required=False)
+parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed percent of SNR decrease when merge two modules', default=0.3, required=False)
 
 ### plot flag
 parser.add_argument('--plot_all', dest='plot_all', action='store_true', help='Switches on all plotting.', required=False)
 ### if verbose 
 parser.add_argument('--verbose', dest='verbose', action='store_true', help='', required=False)
+
 ### whether rewrite temporary files
 parser.add_argument('--force', dest='force', action='store_true', help='', default=False, required=False)
 
