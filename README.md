@@ -9,8 +9,8 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
 
 ### Input
 
- * a matrix of normalized gene expressions; first row and column contain gene and sample names respectively
- * a network of gene interactions; list of edges in a format gene1\tgene2 or network in NDEx format https://home.ndexbio.org/about-ndex/
+ * matrix of normalized gene expressions; first row and column contain gene and sample names respectively
+ * network of gene interactions; list of edges in a format gene1\tgene2 or network in NDEx format https://home.ndexbio.org/about-ndex/
  
 ### Usage example
 
