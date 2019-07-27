@@ -1,5 +1,5 @@
 from __future__ import print_function
-# v1.1
+# v1.2
 import sys,os
 
 import numpy as np
@@ -272,12 +272,17 @@ resulting_bics = merge_modules(filtered_bics,nOnesPerPatientInModules,moduleSize
                                min_n_samples=min_n_samples, verbose= args.verbose)
 print("biclusters after merge:",len(resulting_bics))
 
-result_file_name = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".biclusters.txt"
+result_file_name = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".biclusters"
 
 if args.plot_all:
     from desmond_io import plot_bic_stats
     plot_outfile = args.out_dir + args.basename + suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".bicluster_stats.svg"
     plot_bic_stats(bics,plot_outfile)
 
-write_modules(resulting_bics ,result_file_name)
+write_modules(resulting_bics, result_file_name+".txt")
 print("Total runtime:",round(time.time()-start_time,2),file = sys.stdout)
+
+resulting_bics = pd.DataFrame.from_dict(resulting_bics)
+resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(x),axis=1)
+resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(x),axis=1)
+resulting_bics.to_csv(result_file_name+".tsv" ,sep = "\t")
