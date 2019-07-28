@@ -28,7 +28,7 @@ parser = argparse.ArgumentParser(description="""Searches for gene sets different
 
 
 parser.add_argument('-e','--exprs', dest='exprs_file', type=str, help='Expression matrix with sample name in columns and gene in rows, tab-separated.', default='', required=True,metavar='exprs_zscores.tsv')
-parser.add_argument('-n','--network', dest='network_file', type=str, help='Network in tab or NDEX2 format.', default='', required=True, metavar='network.cx')
+parser.add_argument('-n','--network', dest='network_file', type=str, help='Network in tab or NDEx2 format.', default='', required=True, metavar='network.cx')
 parser.add_argument('-d','--direction', dest='direction', type=str, help='Direction of dysregulation: UP or DOWN', default='UP', required=False)
 parser.add_argument('-m','--method', dest='method', type=str, help='How to assign patients on edges: RHHO or top_halves', default='RRHO', required=False)
 parser.add_argument('-basename','--basename', dest='basename', type=str, help='Output basename without extention. If no outfile name provided output will be set "results_hh:mm_dddd-mm-yy".', default='', required=False)
@@ -286,6 +286,6 @@ write_modules(resulting_bics, result_file_name+".txt")
 print("Total runtime:",round(time.time()-start_time,2),file = sys.stdout)
 
 resulting_bics = pd.DataFrame.from_dict(resulting_bics)
-resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(x),axis=1)
-resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(x),axis=1)
+resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(map(str,x)))
+resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(map(str,x)))
 resulting_bics.to_csv(result_file_name+".tsv" ,sep = "\t")
