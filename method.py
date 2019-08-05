@@ -589,7 +589,7 @@ def identify_opt_sample_set(n_ones, exprs,genes, min_n_samples=50,T=0.5):
     best_thr = -1
     freq_ones = 1.0*n_ones/len(genes)
     thresholds = sorted(list(set(freq_ones)),reverse=True)[:-1]
-    thresholds =  [x for x in thresholds if x >= T]
+    #thresholds =  [x for x in thresholds if x >= T]
     for thr in thresholds:
         ndx = np.where(freq_ones >= thr)[0]
         samples = exprs.iloc[:,ndx].columns.values
