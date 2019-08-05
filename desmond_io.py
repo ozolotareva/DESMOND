@@ -205,3 +205,18 @@ def plot_bic_stats(bics, outfile):
     tmp = plt.title("avg. |SNR|")
     plt.savefig(outfile, transparent=True)
     
+def parse_DESMOND(file_name,delim=" ",genes2ints=False):
+    bics = []
+    with open(file_name,"r") as infile:
+        for line in infile.readlines():
+            line =line.rstrip().split("\t")
+            if line[0] == "id:":
+                bic = {"id":int(line[1])}
+            if line[0] == "average SNR:":
+                bic["avgSNR"] = float(line[1])
+            if line[0] == "genes:":
+                bic["genes"] = set(line[1].split(delim))
+            if line[0] == "samples:":
+                bic["samples"] = set(line[1].split(delim))
+                bics.append(bic)
+    return bics
