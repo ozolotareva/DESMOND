@@ -286,6 +286,9 @@ write_modules(resulting_bics, result_file_name+".txt")
 print("Total runtime:",round(time.time()-start_time,2),file = sys.stdout)
 
 resulting_bics = pd.DataFrame.from_dict(resulting_bics)
+resulting_bics["n_genes"] = resulting_bics["genes"].apply(len)
+resulting_bics["n_samples"] =  resulting_bics["samples"].apply(len)
 resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(map(str,x)))
 resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(map(str,x)))
+resulting_bics = resulting_bics[["id","avgSNR","n_genes","n_samples","genes","samples"]]
 resulting_bics.to_csv(result_file_name+".tsv" ,sep = "\t")
