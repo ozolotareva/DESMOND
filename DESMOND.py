@@ -44,7 +44,7 @@ parser.add_argument('--n_steps_for_convergence', dest='n_steps_for_convergence',
 ### merging and filtering parameters
 parser.add_argument('--min_SNR', dest='min_SNR', type=float, help='SNR threshold for biclusters to consider.', default=0.5, required=False)
 parser.add_argument('--min_sample_overlap', dest='min_sample_overlap', type=float, help='', default=0.5, required=False)
-parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed percent of SNR decrease when merge two modules', default=0.3, required=False)
+parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed percent of SNR decrease when merge two modules', default=0.1, required=False)
 
 ### plot flag
 parser.add_argument('--plot_all', dest='plot_all', action='store_true', help='Switches on all plotting.', required=False)
@@ -248,13 +248,13 @@ from method import get_genes, identify_opt_sample_set, bicluster_avg_SNR
 from desmond_io import write_modules
 from method import merge_modules, calc_new_SNR, add_bic, remove_bic
 
-T = 0.5
+
 bics = []
 for mid in range(0,len(moduleSizes)):
     if moduleSizes[mid]>2:
         genes = get_genes(mid,edge2Module,network.edges())
         samples, thr, avgSNR = identify_opt_sample_set(nOnesPerPatientInModules[mid,],
-                                            exprs, genes, min_n_samples=min_n_samples,T=T)
+                                            exprs, genes, min_n_samples=min_n_samples)
         bics.append({"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"id":mid})
 
 
@@ -275,6 +275,7 @@ resulting_bics = merge_modules(filtered_bics,nOnesPerPatientInModules,moduleSize
                                min_n_samples=min_n_samples, verbose= args.verbose)
 print("biclusters after merge:",len(resulting_bics))
 
+
 result_file_name = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".biclusters"
 
 if args.plot_all:
@@ -291,4 +292,5 @@ resulting_bics["n_samples"] =  resulting_bics["samples"].apply(len)
 resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(map(str,x)))
 resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(map(str,x)))
 resulting_bics = resulting_bics[["id","avgSNR","n_genes","n_samples","genes","samples"]]
+resulting_bics.sort_values(by=["n_samples","avgSNR","n_genes"],inplace = True, ascending = False)
 resulting_bics.to_csv(result_file_name+".tsv" ,sep = "\t")

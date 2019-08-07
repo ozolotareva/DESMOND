@@ -583,23 +583,25 @@ def get_consensus_modules(edge2module_history, network, edge2Patients, edge2Modu
     return consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, edgeOneFreqs, moduleOneFreqs
 
 ################################## 3. Post-processing ##########################################
-def identify_opt_sample_set(n_ones, exprs,genes, min_n_samples=50,T=0.5):
+
+def identify_opt_sample_set(n_ones, exprs,genes, min_n_samples=50):
     best_sample_set = []
     best_SNR = 0
     best_thr = -1
     freq_ones = 1.0*n_ones/len(genes)
-    thresholds = sorted(list(set(freq_ones)),reverse=True)[:-1]
-    #thresholds =  [x for x in thresholds if x >= T]
+    thresholds = sorted(list(set(freq_ones)),reverse=True)
     for thr in thresholds:
         ndx = np.where(freq_ones >= thr)[0]
         samples = exprs.iloc[:,ndx].columns.values
+        if len(samples) > exprs.shape[1]/2: # stop when 1/2 samples included
+            return best_sample_set, best_thr, best_SNR
         if len(samples) > min_n_samples:
             avgSNR =  bicluster_avg_SNR(exprs,genes=genes,samples=samples)
             if avgSNR > best_SNR: 
                 best_SNR = avgSNR 
                 best_sample_set = samples
                 best_thr = thr
-    return best_sample_set, best_thr, best_SNR
+    
 
 def get_genes(mid,edge2module,edges):
     ndx = [i for i, j in enumerate(edge2module) if j == mid]
