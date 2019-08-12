@@ -5,6 +5,8 @@ from itertools import product
 import sys,os
 import time
 
+from desmond_io import read_DESMOND
+
 import matplotlib 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -14,7 +16,7 @@ def read_true_bics(bic_file_path):
         bics = []
         for line in infile.readlines():
             line = line.rstrip().split()
-            if line[0].startswith("bic"):
+            if line[0].startswith("id"):
                 bic = {"id":line[1]}
             elif line[0].startswith("g"):
                 bic["genes"] = set(line[1:])
@@ -136,6 +138,20 @@ def parse_JBiclustGE(bic_file_path,n_runs=1):
         run+=1
     return runs
 
+def parse_DESMOND(bic_file_path,n_runs=1):
+    runs = []
+    for run in range(1,n_runs+1):
+        f_path = bic_file_path +"_"+str(run)+ ".DESMOND.biclusters.txt"
+        try:
+            bics =read_DESMOND(f_path)
+            for bic in bics:
+                bic["run"]=run
+            runs.append(bics)
+        except:
+            print(f_path,"failed to read.")
+    return runs
+
+
 def read_all_results(parameters,tool_name,n_runs=10, parse_biclust_func=parse_biclust,
                      pred_bic_dir="./",pred_bic_fname_prefix="simulated.N=10.Mu=2.0.GxP=",
                      pred_bic_fname_suffix=".biclust_results.txt",
@@ -185,27 +201,24 @@ def read_all_results(parameters,tool_name,n_runs=10, parse_biclust_func=parse_bi
             for n_genes in g_sizes:
                 for n_samples in s_sizes:
                     pred_bic_fname = pred_bic_fname_prefix+str(n_genes)+","+str(n_samples)+pred_bic_fname_suffix
-                    if not parse_biclust_func.__name__ =="parse_JBiclustGE":
+                    if  parse_biclust_func.__name__ =="parse_biclust":
                         if not os.path.isfile(pred_bic_dir+params_folder+"/" + pred_bic_fname):
                             files_not_found+=1
                             runs = False
+                            print("File not found",pred_bic_dir+params_folder+"/" + pred_bic_fname)
                         elif os.path.getsize(pred_bic_dir+params_folder+"/" + pred_bic_fname)== 0:
                             files_empty +=1
                             runs = False
+                            print("File is empty",pred_bic_dir+params_folder+"/" + pred_bic_fname)
                         else:
-                            try:
-                                runs = parse_biclust_func(pred_bic_dir+params_folder+"/" + pred_bic_fname, n_runs = n_runs)
-                            except:
-                                runs = False
-                                n_failed_to_parse +=1 
-                                print("Failed to parse",pred_bic_dir+params_folder+"/" + pred_bic_fname)
-                    else: 
-                        try:
-                            runs = parse_biclust_func(pred_bic_dir+params_folder+"/" + pred_bic_fname, n_runs = n_runs)
-                        except:
-                            runs = False
-                            n_failed_to_parse +=1 
-                            print("Failed to parse",pred_bic_dir+params_folder+"/" + pred_bic_fname)
+                            pass
+                    try:
+                        runs = parse_biclust_func(pred_bic_dir+params_folder+"/" + pred_bic_fname, n_runs = n_runs)
+                    except:
+                        runs = False
+                        n_failed_to_parse +=1 
+                        print("Failed to parse",pred_bic_dir+params_folder+"/" + pred_bic_fname)
+                        
                     if not runs:
                         for run in range(1,n_runs+1):
                             d = {"n_run":run,"F1 per best match":0,
@@ -237,28 +250,30 @@ def read_all_results(parameters,tool_name,n_runs=10, parse_biclust_func=parse_bi
     return results 
 
 
-def F1_per_bm(true_bics, pred_bics, verbose = False):
+def F1_per_bic(true_bics, pred_bics, verbose = False):
     if verbose:
         print("\t".join(["id","best_match_id","%bic_recovered",
                         "true_genes","true_samples", "f1"]))
     if len(pred_bics) == 0 :
         return list(np.zeros(len(true_bics)))
     F1 = []
-    for t in true_bics:
-        tg = t["genes"]
-        ts = t["samples"]
-        bm_id = False
+    for bic in pred_bics:
+        bm_id = -1
         best_overlap = 0
-        for bic in pred_bics:
+        print("bic",bic["id"])
+        for t in true_bics:
+            tg = t["genes"]
+            ts = t["samples"]
             n_shared_genes = len(tg.intersection(bic["genes"]))
             n_shared_samples = len(ts.intersection(bic["samples"]))
             overlap = n_shared_genes * n_shared_samples
             if overlap > best_overlap:
                 best_overlap, shared_genes, shared_samples = overlap, n_shared_genes, n_shared_samples
-                bm_id = bic["id"]
+                bm_id = t["id"]
                 bm_genes = len(bic["genes"])
                 bm_samples = len(bic["samples"])
-        if bm_id:
+        #print(" best match for bic",bic["id"],"is true_bic",bm_id , best_overlap)
+        if bm_id >= 0:
             tp = best_overlap 
             fp = bm_genes*bm_samples-tp
             fn = len(t["genes"])*len(t["samples"]) -tp
@@ -274,19 +289,19 @@ def F1_per_bm(true_bics, pred_bics, verbose = False):
                                  shared_genes, shared_samples, f1])))
     return F1
 
-def F1_per_bic(true_bics, pred_bics, verbose = False):
+def F1_per_bm(true_bics, pred_bics, verbose = False):
     if verbose:
         print("\t".join(["id","best_match_id","%bic_recovered",
                         "true_genes","true_samples", "f1"]))
     if len(pred_bics) == 0 :
         return list(np.zeros(len(true_bics)))
     F1 = []
-    for bic in pred_bics:
-        bm_id = False
+    for t in true_bics:
+        tg = t["genes"]
+        ts = t["samples"]
+        bm_id = -1
         best_overlap = 0
-        for t in true_bics:
-            tg = t["genes"]
-            ts = t["samples"]
+        for bic in pred_bics:
             n_shared_genes = len(tg.intersection(bic["genes"]))
             n_shared_samples = len(ts.intersection(bic["samples"]))
             overlap = n_shared_genes * n_shared_samples
@@ -295,7 +310,7 @@ def F1_per_bic(true_bics, pred_bics, verbose = False):
                 bm_id = bic["id"]
                 bm_genes = len(bic["genes"])
                 bm_samples = len(bic["samples"])
-        if bm_id:
+        if bm_id >= 0:
             tp = best_overlap 
             fp = bm_genes*bm_samples-tp
             fn = len(t["genes"])*len(t["samples"]) -tp
