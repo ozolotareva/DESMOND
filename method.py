@@ -6,16 +6,13 @@ import time
 import copy
 import random
 
-
 import pandas as pd
 import numpy as np
 from fisher import pvalue
 import itertools
-
-
+import math
 
 import networkx as nx
-
 
 import matplotlib
 import matplotlib.pyplot as plt 
@@ -209,40 +206,43 @@ def mask_empty_edges(network,min_n_samples=10,remove = False, verbose = True):
     return network
 #################################### Gibbs Sampling #######################################################
 
-
-def calc_norm_coef(p,q,N,match_score,mismatch_score):
-    p_match = (2*p*q+1-p -q)
-    return (p_match*match_score+(1-p_match)*mismatch_score)*N
-
 def calc_lp(edge,self_module,module,edge2Patients,nOnesPerPatientInModules,moduleSizes,
-            edgeOneFreqs, moduleOneFreqs,p0,
+            moduleOneFreqs,p0,match_score,mismatch_score,bK_1,log_func=np.log,
             alpha=1.0,beta_K=1.0):
     
+    N = edge2Patients.shape[1]
     m_size = moduleSizes[module]
     edge_vector = edge2Patients[edge,]
-    #p = edgeOneFreqs[edge]
-    if m_size == 0:
-        return p0#-calc_norm_coef(p,p)
     
-
+  
+    if m_size == 0:
+        return p0
+    
     n_ones_per_pat = nOnesPerPatientInModules[module,]
     
     if self_module == module: # remove the edge from the module, if it belongs to a module
         if m_size == 1:
-            return p0 #- calc_norm_coef(p,p)
+            return p0
         m_size -=1
         n_ones_per_pat = n_ones_per_pat-edge_vector
-        
-    module_size_term = np.log(m_size+beta_K)
+    
+    # if a module is composed of a single edge
+    if m_size == 1:
+        # just count number of matches and mismatches and
+        n_matches =  np.inner(n_ones_per_pat,edge_vector)
+        return n_matches*match_score+(N-n_matches)*mismatch_score + bK_1
+    
+    # if a module contains more than one edge
+    beta_term = math.log(m_size+beta_K)
+    # alpha_term
     # ones-matching
-    oneRatios =(n_ones_per_pat+alpha/2)/(m_size+alpha)
-    ones_matching_term = np.inner(np.log(oneRatios),edge_vector)
+    oneRatios = (n_ones_per_pat+alpha/2)/(m_size+alpha)
+    ones_matching_term = np.inner(log_func(oneRatios),edge_vector)
     # zero-matching
     zeroRatios = (m_size-n_ones_per_pat+alpha/2)/(m_size+alpha)
-    zeros_matching_term = np.inner(np.log(zeroRatios),(1-edge_vector))
-    lp = module_size_term+ones_matching_term+zeros_matching_term
-    #q = moduleOneFreqs[edge]
-    return lp #- calc_norm_coef(p,q)
+    zeros_matching_term = np.inner(log_func(zeroRatios),(1-edge_vector))
+
+    return ones_matching_term+zeros_matching_term + beta_term
 
 def set_initial_conditions(network,exprs, verbose = True):
     t_0 = time.time()
@@ -282,28 +282,25 @@ def set_initial_conditions(network,exprs, verbose = True):
     #4.
     edge2Module = range(0,len(network.edges()))
     
-    #5. edgeOneFreqs 
-    edgeOneFreqs = []
+    #5. moduleOneFreqs
+    moduleOneFreqs = []
     n = edge2Patients.shape[0]
     for e in range(0,n):
-        edgeOneFreqs.append(float(sum(edge2Patients[e,]))/edge2Patients.shape[1])
-    
-    #6. edgeOneFreqs
-    moduleOneFreqs = copy.copy(edgeOneFreqs)
+        moduleOneFreqs.append(float(sum(edge2Patients[e,]))/edge2Patients.shape[1])
     
     print("Initial state created in",round(time.time()- t_0,1) , "s runtime", file = sys.stdout)
-    return moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs
+    return moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, moduleOneFreqs
 
 def adjust_lp(log_probs,n_exp_orders=7):
     # adjusting the log values before normalization to avoid under-flow
     max_p = max(log_probs)
-    # shift all probs to set max_prob less than log(max_np.float)  
-    log_probs = log_probs - max_p
-    # set to minimal values all which less then 'n_orders' lesser than p_max to zeroes
     probs = []
     for lp in log_probs:
-        if lp >= - n_exp_orders:
-            probs.append(np.exp(lp))
+        # shift all probs to set max_prob less than log(max_np.float)  
+        adj_lp = lp - max_p
+        # set to minimal values all which less then 'n_orders' lesser than p_max to zeroes
+        if adj_lp >= - n_exp_orders:
+            probs.append(np.exp(adj_lp))
         else:
             probs.append(0)
     probs = probs/sum(probs)
@@ -386,7 +383,7 @@ def check_convergence_conditions(n_skipping_edges,n_skipping_edges_range,
         
 ### sample and update model when necessary 
 def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleSizes,
-             edgeOneFreqs, moduleOneFreqs, p0, alpha = 0.1, beta_K = 1.0,
+             moduleOneFreqs, p0, match_score, mismatch_score, bK_1,log_func=np.log, alpha = 0.1, beta_K = 1.0,
              max_n_steps=100,n_steps_averaged = 20,n_points_fit = 10,tol = 0.1,
              n_steps_for_convergence = 5,verbose=True):
     t_ =  time.time()
@@ -394,13 +391,15 @@ def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleS
     #n_edge_skip_history = [0]
     #max_edges_oscillating = int(max_frac_edges_oscillating*len(network.edges()))
     is_converged = False
+    network_edges = network.edges(data=True)
     for step in range(1,max_n_steps):
         print("step",step)
         not_changed_edges = 0
         t_0 = time.time()
         t_1=t_0
         i = 1
-        for n1,n2,data in network.edges(data=True):
+        random.shuffle(network_edges)
+        for n1,n2,data in network_edges:
             # adjust LogP and sample a new module
             p = adjust_lp(data['log_p'],n_exp_orders=7)
             curr_module = data['m']
@@ -411,7 +410,7 @@ def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleS
             if new_module != curr_module:
                 apply_changes(network,n1,n2,edge_ndx,curr_module,new_module,
                               edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes,
-                              edgeOneFreqs, moduleOneFreqs, p0,
+                              moduleOneFreqs, p0,match_score,mismatch_score, bK_1,log_func=log_func,
                               alpha=alpha,beta_K=beta_K)
                 
             else:
@@ -463,20 +462,20 @@ def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleS
             if verbose:
                 print("The model converged after", step,"steps.", file = sys.stdout)
                 print("Consensus of last",n_final_steps,"states will be taken")
-                print("Total runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
+                print("Sampling runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
             return edge2Module_history, n_final_steps,n_skipping_edges,P_diffs
     
     n_final_steps = n_steps_for_convergence
     if verbose:
         print("The model did not converge after", step,"steps.", file = sys.stdout)
         print("Consensus of last",n_final_steps,"states will be taken")
-        print("Total runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
+        print("Sampling runtime",round(time.time()- t_ ,1) , "s", file = sys.stdout)
         
     return edge2Module_history,n_final_steps,n_skipping_edges,P_diffs
 
 def apply_changes(network,n1,n2, edge_ndx,curr_module, new_module,
                   edge2Patients,edge2Module,nOnesPerPatientInModules,moduleSizes,
-                  edgeOneFreqs, moduleOneFreqs,p0,
+                  moduleOneFreqs,p0,match_score,mismatch_score,bK_1,log_func=np.log,
                   alpha=1.0,beta_K=1.0,no_LP_update = False):
     '''Moves the edge from current module to the new one
     and updates network, nOnesPerPatientInModules and moduleSizes respectively.'''
@@ -508,7 +507,8 @@ def apply_changes(network,n1,n2, edge_ndx,curr_module, new_module,
                     e = data['e']
                     #### update LP for new_module
                     lp = calc_lp(e,m,new_module,edge2Patients,nOnesPerPatientInModules,moduleSizes,
-                                 edgeOneFreqs,moduleOneFreqs,p0,alpha=alpha,beta_K=beta_K)
+                                 moduleOneFreqs,p0,match_score,mismatch_score,bK_1,log_func=log_func,
+                                 alpha=alpha,beta_K=beta_K)
                     # find index of targe module or add it if did not exist
                     if new_module in data['modules']:
                         m_ndx = data['modules'].index(new_module)
@@ -527,7 +527,7 @@ def apply_changes(network,n1,n2, edge_ndx,curr_module, new_module,
                         if data_['m'] == curr_module or data_['e'] == curr_module: 
                             still_connected = True
                             lp = calc_lp(e,m,curr_module,edge2Patients,nOnesPerPatientInModules,moduleSizes,
-                                         edgeOneFreqs,moduleOneFreqs,p0,
+                                         moduleOneFreqs,p0,match_score,mismatch_score,bK_1,log_func=log_func,
                                          alpha=alpha,beta_K=beta_K)
                             m_ndx = data['modules'].index(curr_module)
                             data['log_p'][m_ndx] = lp
@@ -545,7 +545,8 @@ def apply_changes(network,n1,n2, edge_ndx,curr_module, new_module,
 
 ### get consensus module membership
 def get_consensus_modules(edge2module_history, network, edge2Patients, edge2Module,
-                          nOnesPerPatientInModules,moduleSizes, edgeOneFreqs, moduleOneFreqs, p0, 
+                          nOnesPerPatientInModules,moduleSizes, moduleOneFreqs, p0, match_score,mismatch_score,
+                          bK_1,log_func=np.log,
                           alpha=1.0,beta_K=1.0):
     consensus_edge2module = []
     labels = np.asarray(edge2module_history)
@@ -575,12 +576,12 @@ def get_consensus_modules(edge2module_history, network, edge2Patients, edge2Modu
             changed_edges += 1
             n1, n2 = edges[i]
             apply_changes(network,n1,n2,i,curr_module,new_module,
-                                  edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes,
-                                  edgeOneFreqs, moduleOneFreqs,p0,
-                                  alpha=alpha,beta_K=beta_K,no_LP_update = True)
+                          edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes,
+                          moduleOneFreqs,p0,match_score,mismatch_score,bK_1,log_func=log_func,
+                          alpha=alpha,beta_K=beta_K,no_LP_update = True)
             
     print(changed_edges, "edges changed their module membership after taking consensus.")
-    return consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, edgeOneFreqs, moduleOneFreqs
+    return consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, moduleOneFreqs
 
 ################################## 3. Post-processing ##########################################
 
@@ -744,3 +745,89 @@ def bicluster_corrs(exprs,genes=[],samples=[]):
     return round(np.average(corrs),2), round(np.min(corrs),2), round(np.max(corrs),2)
 
 
+def merge_biclsuters(bic, bic2, exprs, min_n_samples, direction="UP", min_SNR=0.5, max_SNR_decrease=0.1):
+    new_bic = {"id":bic["id"]}
+    genes = bic["genes"].union(bic2["genes"])
+    new_bic["genes"] = genes
+    new_bic["n_genes"] = len(genes)
+    best_avgSNR =  min_SNR
+    best_thr = -1
+    if direction == "UP":
+        ascending = False
+    else:
+        ascending = True
+        
+    e = exprs.loc[genes,:]
+    ordered_samples = e.mean(axis =0).sort_values(ascending = False).index
+    e = e.loc[:,ordered_samples].values.T
+    for i in range(min_n_samples,exprs.shape[1]/2):
+        avgSNR = abs(np.mean((e[0:i,:].mean() - e[i:,:].mean())/(e[0:i,:].std() + e[i:,:].std())))
+        if avgSNR > best_avgSNR:
+            
+            best_avgSNR = avgSNR
+            best_thr = i
+    if best_thr > 0 or best_avgSNR < (1-max_SNR_decrease)*max(bic["avgSNR"],bic2["avgSNR"]):
+        samples = set(ordered_samples.values[:best_thr])
+        new_bic["samples"] = samples
+        new_bic["n_samples"] = len(samples)
+        new_bic["avgSNR"] = best_avgSNR
+        
+    else:
+        new_bic["avgSNR"] = 0
+    return new_bic
+    
+def do_merging(biclusters, exprs, min_n_samples=8,verbose = True,direction="UP", min_SNR=0.5, max_SNR_decrease=0.1, J_threshold=0.5):
+    t0 = time.time()
+    bics = copy.copy(biclusters)
+    merged_bics = []
+    for bic_id in bics.keys():
+        if bic_id in bics.keys():
+            candidates = []
+            n_merges = 0
+            bic = bics[bic_id]
+            if verbose:
+                print("Candidates for merging with bicluster %s, avg.SNR=%s :" % (bic["id"],round(bic["avgSNR"],2)))
+            for bic2_id in bics.keys():
+                if bic_id!= bic2_id:
+                    bic2 = bics[bic2_id]
+                    sh_samples = bic["samples"].intersection(bic2["samples"])
+                    u_samples = bic["samples"].union(bic2["samples"])
+                    J = (1.0*len(sh_samples))/len(u_samples)
+                    if J>J_threshold:
+                        candidates.append(bic2)
+                        
+
+            no_merge = False
+            while len(candidates)>0 and not no_merge:
+                bm_id, best_new_bic, best_avgSNR = False, False, min_SNR
+                no_merge = True
+                for i in range(0,len(candidates)):
+                    bic2 = candidates[i]
+                    # create a new bicsluter from bic and bic2
+                    new_bic = merge_biclsuters(bic, bic2, exprs, min_n_samples=min_n_samples,
+                                              direction=direction, min_SNR = min_SNR, max_SNR_decrease = max_SNR_decrease)
+                    if new_bic["avgSNR"]> best_avgSNR:
+                        bm_id,bm_ndx = bic2["id"], i
+                        best_new_bic = new_bic
+                        best_avgSNR = new_bic["avgSNR"]
+                if bm_id:
+                    no_merge =  False
+                    if verbose:
+                        print("\tMerge biclusters %s:%sx%s and %s:%sx%s --> %s SNR and %sx%s"% (bic_id, bic["n_genes"], bic["n_samples"],
+                                                                                            bm_id,bics[bm_id]["n_genes"],bics[bm_id]["n_samples"],
+                                                                                            round(best_new_bic["avgSNR"],2),
+                                                                                            best_new_bic["n_genes"],best_new_bic["n_samples"]))
+                    bic = best_new_bic
+                    n_merges +=1
+                    # delete bic2 
+                    # from candidates
+                    del candidates[bm_ndx]
+                    # from the list 
+                    del bics[bm_id]
+            merged_bics.append(bic)
+            if verbose:
+                print("%s biclusters joined to bicluster %s." % (n_merges,bic_id))
+                print("Resulting bicluster %sx%s SNR=%s." % (bic["n_genes"],bic["n_samples"],
+                                                            (round(bic["avgSNR"],2))))
+    print("Merging finished in:",round(time.time()-t0,2))
+    return merged_bics
