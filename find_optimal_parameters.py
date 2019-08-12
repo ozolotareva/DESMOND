@@ -260,7 +260,6 @@ def F1_per_bic(true_bics, pred_bics, verbose = False):
     for bic in pred_bics:
         bm_id = -1
         best_overlap = 0
-        print("bic",bic["id"])
         for t in true_bics:
             tg = t["genes"]
             ts = t["samples"]
