@@ -413,3 +413,19 @@ def get_opt_params(results, params, what="Relevance", more_n_smaples = 0, defaul
                 std_def = round(r.loc[default_params,(measure,"std")],3)
                 print("\tavg. %s: %s u\u00B1 %s"% (what, m ,std))
     return r
+
+def read_DESMOND(file_name,delim=" ",genes2ints=False):
+    bics = []
+    with open(file_name,"r") as infile:
+        for line in infile.readlines():
+            line =line.rstrip().split("\t")
+            if line[0] == "id:":
+                bic = {"id":int(line[1])}
+            if line[0] == "average SNR:":
+                bic["avgSNR"] = float(line[1])
+            if line[0] == "genes:":
+                bic["genes"] = set(line[1].split(delim))
+            if line[0] == "samples:":
+                bic["samples"] = set(line[1].split(delim))
+                bics.append(bic)
+    return bics
