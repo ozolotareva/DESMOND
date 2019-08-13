@@ -5,8 +5,6 @@ from itertools import product
 import sys,os
 import time
 
-from desmond_io import read_DESMOND
-
 import matplotlib 
 import matplotlib.pyplot as plt
 import seaborn as sns
