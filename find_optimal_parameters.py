@@ -152,12 +152,116 @@ def parse_DESMOND(bic_file_path,n_runs=1):
     return runs
 
 
+
+def J_relevance(true_bics, pred_bics):
+    if len(pred_bics) == 0 :
+        return list(np.zeros(len(true_bics)))
+    Jaccards = []
+    for bic in pred_bics:
+        bm_id = -1
+        best_J = 0
+        bg = bic["genes"]
+        bs = bic["samples"]
+        for t in true_bics:
+            tg = t["genes"]
+            ts = t["samples"]
+            n_shared_genes = len(tg.intersection(bg))
+            n_shared_samples = len(ts.intersection(bs))
+            overlap = n_shared_genes * n_shared_samples
+            J = 1.0*(overlap)/(len(tg)*len(ts)+len(bg)*len(bs)-overlap)
+            if J > best_J:
+                best_J, bm_id  = J, t["id"]
+        Jaccards.append(best_J)
+    return Jaccards
+
+def J_recovery(true_bics, pred_bics):
+    if len(pred_bics) == 0 :
+        return list(np.zeros(len(true_bics)))
+    Jaccards = []
+    for t in true_bics:
+        tg = t["genes"]
+        ts = t["samples"]
+        bm_id = -1
+        best_J = 0
+        for bic in pred_bics:
+            bg = bic["genes"]
+            bs = bic["samples"]
+            n_shared_genes = len(tg.intersection(bg))
+            n_shared_samples = len(ts.intersection(bs))
+            overlap = n_shared_genes * n_shared_samples
+            J = 1.0*(overlap)/(len(tg)*len(ts)+len(bg)*len(bs)-overlap)
+            if J > best_J:
+                best_J, bm_id  = J, bic["id"]
+        Jaccards.append(best_J)
+    return Jaccards
+
+
+def F1_per_bic(true_bics, pred_bics):
+    if len(pred_bics) == 0 :
+        return list(np.zeros(len(true_bics)))
+    F1 = []
+    for bic in pred_bics:
+        bg = bic["genes"]
+        bs = bic["samples"]
+        bm_id = -1
+        best_f1 = 0
+        for t in true_bics:
+            tg = t["genes"]
+            ts = t["samples"]
+            n_shared_genes = len(tg.intersection(bg))
+            n_shared_samples = len(ts.intersection(bs))
+            tp = n_shared_genes * n_shared_samples
+            if tp == 0:
+                f1 = 0
+            else:
+                fp = len(bg)*len(bs)-tp
+                fn = len(tg)*len(ts)-tp
+                prec = 1.0*tp/(tp + fp) 
+                rec =  1.0*tp/(tp + fn)
+                f1 = 2*(prec*rec)/(prec+rec)
+                if f1 > best_f1:
+                    best_f1 = f1
+                    bm_id = bic["id"]
+        F1.append(best_f1)
+    return F1
+
+def F1_per_bm(true_bics, pred_bics):
+    if len(pred_bics) == 0 :
+        return list(np.zeros(len(true_bics)))
+    F1 = []
+    for t in true_bics:
+        tg = t["genes"]
+        ts = t["samples"]
+        bm_id = -1
+        best_f1 = 0
+        for bic in pred_bics:
+            bg = bic["genes"]
+            bs = bic["samples"]
+            n_shared_genes = len(tg.intersection(bg))
+            n_shared_samples = len(ts.intersection(bs))
+            tp = n_shared_genes * n_shared_samples
+            if tp == 0:
+                f1 = 0
+            else:
+                fp = len(bg)*len(bs)-tp
+                fn = len(tg)*len(ts)-tp
+                prec = 1.0*tp/(tp + fp) 
+                rec =  1.0*tp/(tp + fn)
+                f1 = 2*(prec*rec)/(prec+rec)
+                if f1 > best_f1:
+                    best_f1 = f1
+                    bm_id = bic["id"]
+        F1.append(best_f1)
+    return F1
+
+
 def read_all_results(parameters,tool_name,n_runs=10, parse_biclust_func=parse_biclust,
                      pred_bic_dir="./",pred_bic_fname_prefix="simulated.N=10.Mu=2.0.GxP=",
                      pred_bic_fname_suffix=".biclust_results.txt",
                      true_bic_dir="./",true_bic_fname_prefix="simulated.N=10.Mu=2.0.GxP=",
                      true_bic_fname_suffix=".biclusters.txt", param_folder_delim=".",
-                     g_sizes = [5,10,20,50,100], s_sizes = [10,20,50,100]):
+                     g_sizes = [5,10,20,50,100], s_sizes = [10,20,50,100],
+                     relevance_method=J_relevance, recovery_method=J_recovery):
     results = []
     failed_param_combinations = 0
     succ_param_combinations = 0
@@ -221,17 +325,17 @@ def read_all_results(parameters,tool_name,n_runs=10, parse_biclust_func=parse_bi
                         
                     if not runs:
                         for run in range(1,n_runs+1):
-                            d = {"n_run":run,"F1 per best match":0,
-                                 "F1 per bicluster":0,"n_genes":n_genes,"n_samples":n_samples,"n_biclusters":0}
+                            d = {"n_run":run,"Recovery":0,
+                                 "Relevance":0,"n_genes":n_genes,"n_samples":n_samples,"n_biclusters":0}
                             d.update(dict(param_combination))
                             results.append(d)
                     else:
                         n_run = 1
                         for pred_bics in runs:
-                            F1_bm = F1_per_bm(true_biclusters[(n_genes,n_samples)], pred_bics, verbose = False)
-                            F1 = F1_per_bic(true_biclusters[(n_genes,n_samples)], pred_bics, verbose = False)
+                            rec = recovery_method(true_biclusters[(n_genes,n_samples)], pred_bics)
+                            rel = relevance_method(true_biclusters[(n_genes,n_samples)], pred_bics)
                             d = {"n_run":n_run,"n_genes":n_genes,"n_samples":n_samples,
-                                 "F1 per bicluster":np.mean(F1),"F1 per best match":np.mean(F1_bm),"n_biclusters":len(F1)}
+                                 "Relevance":np.mean(rel),"Recovery":np.mean(rec),"n_biclusters":len(rel)}
                             d.update(dict(param_combination)) # {"discr_levels":discr_levels,"alpha":alpha, "ns":ns,"n_run":n_run,
                             results.append(d)
                             n_run+=1
@@ -246,86 +350,10 @@ def read_all_results(parameters,tool_name,n_runs=10, parse_biclust_func=parse_bi
     results=pd.DataFrame.from_dict(results)
     #results=results.loc[results["alpha"]==0.05,:].loc[results["ns"]==10,:]
     print("Total runs",results.shape[0])
-    print("Non-zero runs:",results.loc[results["F1 per bicluster"]>0,:].shape[0])
-    return results 
+    print("Non-zero runs:",results.loc[results["Relevance"]>0,:].shape[0])
+    return results[["n_genes","n_samples"]+dict(param_combination).keys()+["n_biclusters","Relevance","Recovery"]]
 
-
-def F1_per_bic(true_bics, pred_bics, verbose = False):
-    if verbose:
-        print("\t".join(["id","best_match_id","%bic_recovered",
-                        "true_genes","true_samples", "f1"]))
-    if len(pred_bics) == 0 :
-        return list(np.zeros(len(true_bics)))
-    F1 = []
-    for bic in pred_bics:
-        bm_id = -1
-        best_overlap = 0
-        for t in true_bics:
-            tg = t["genes"]
-            ts = t["samples"]
-            n_shared_genes = len(tg.intersection(bic["genes"]))
-            n_shared_samples = len(ts.intersection(bic["samples"]))
-            overlap = n_shared_genes * n_shared_samples
-            if overlap > best_overlap:
-                best_overlap, shared_genes, shared_samples = overlap, n_shared_genes, n_shared_samples
-                bm_id = t["id"]
-                bm_genes = len(bic["genes"])
-                bm_samples = len(bic["samples"])
-        #print(" best match for bic",bic["id"],"is true_bic",bm_id , best_overlap)
-        if bm_id >= 0:
-            tp = best_overlap 
-            fp = bm_genes*bm_samples-tp
-            fn = len(t["genes"])*len(t["samples"]) -tp
-            prec = 1.0*tp/(tp + fp) 
-            rec =  1.0*tp/(tp + fn)
-            f1 = 2*(prec*rec)/(prec+rec)
-        else:
-            f1=0
-        F1.append(f1)
-        if verbose:
-            print("\t".join(map(str,[t["id"],bm_id,
-                                 1.0*best_overlap/(len(t["genes"])*len(t["samples"])),
-                                 shared_genes, shared_samples, f1])))
-    return F1
-
-def F1_per_bm(true_bics, pred_bics, verbose = False):
-    if verbose:
-        print("\t".join(["id","best_match_id","%bic_recovered",
-                        "true_genes","true_samples", "f1"]))
-    if len(pred_bics) == 0 :
-        return list(np.zeros(len(true_bics)))
-    F1 = []
-    for t in true_bics:
-        tg = t["genes"]
-        ts = t["samples"]
-        bm_id = -1
-        best_overlap = 0
-        for bic in pred_bics:
-            n_shared_genes = len(tg.intersection(bic["genes"]))
-            n_shared_samples = len(ts.intersection(bic["samples"]))
-            overlap = n_shared_genes * n_shared_samples
-            if overlap > best_overlap:
-                best_overlap, shared_genes, shared_samples = overlap, n_shared_genes, n_shared_samples
-                bm_id = bic["id"]
-                bm_genes = len(bic["genes"])
-                bm_samples = len(bic["samples"])
-        if bm_id >= 0:
-            tp = best_overlap 
-            fp = bm_genes*bm_samples-tp
-            fn = len(t["genes"])*len(t["samples"]) -tp
-            prec = 1.0*tp/(tp + fp) 
-            rec =  1.0*tp/(tp + fn)
-            f1 = 2*(prec*rec)/(prec+rec)
-        else:
-            f1=0
-        F1.append(f1)
-        if verbose:
-            print("\t".join(map(str,[t["id"],bm_id,
-                                 1.0*best_overlap/(len(t["genes"])*len(t["samples"])),
-                                 shared_genes, shared_samples, f1])))
-    return F1
-
-def plot_F1_heatmap(results,params,f1_thr=0.05,g_sizes = [5,10,20,50,100], s_sizes = [10,20,50,100],
+def plot_performance_heatmap(results,params,what="Relevance",f1_thr=0.05,g_sizes = [5,10,20,50,100], s_sizes = [10,20,50,100],
                     plot=True,plot_file="",outfile=""):
     
     print("Total combinations:", results.loc[:,params].drop_duplicates().shape[0])
@@ -333,15 +361,15 @@ def plot_F1_heatmap(results,params,f1_thr=0.05,g_sizes = [5,10,20,50,100], s_siz
     for n_genes in g_sizes:
         for n_samples in s_sizes:
             r = results.loc[results["n_genes"]==n_genes,:].loc[results["n_samples"]==n_samples,:]
-            r = r.groupby(by=params).agg(np.mean)[["F1 per bicluster"]]
-            heatmap[(n_genes ,n_samples)] = r.to_dict()['F1 per bicluster']
+            r = r.groupby(by=params).agg(np.mean)[[what]]
+            heatmap[(n_genes ,n_samples)] = r.to_dict()[what]
     heatmap = pd.DataFrame.from_dict(heatmap)
     heatmap.fillna(0,inplace = True)
     heatmap.index.names = params
     heatmap.columns.names = ["genes","samples"]
     print("Total combinations:", heatmap.shape[0])
     heatmap_show = heatmap.loc[heatmap.apply(np.mean,axis=1)  > f1_thr,:]
-    print("Combinations with mean F1 > "+str(f1_thr),heatmap_show.shape[0])
+    print("Combinations with mean > "+str(f1_thr),heatmap_show.shape[0])
     if plot:
         fig, ax = plt.subplots(figsize=(20,10*heatmap_show.shape[0]/40+1))
         sns.heatmap(heatmap_show,ax=ax, annot=True)
@@ -352,7 +380,7 @@ def plot_F1_heatmap(results,params,f1_thr=0.05,g_sizes = [5,10,20,50,100], s_siz
     return heatmap 
 
 
-def get_opt_params(results, params, more_n_smaples = 0, default_params = None, verbose=True):
+def get_opt_params(results, params, what="Relevance", more_n_smaples = 0, default_params = None, verbose=True):
     if more_n_smaples > 0:
         ini_runs  = results.shape[0]
         r = results.loc[results["n_samples"]> more_n_smaples,:]
@@ -362,36 +390,26 @@ def get_opt_params(results, params, more_n_smaples = 0, default_params = None, v
         print("All %s runs considered" % (r.shape[0])) 
         
     n_bic_kinds = r[["n_genes","n_samples"]].drop_duplicates().shape[0]
-    r = r.groupby(by = params).agg(["mean","std","count","max","min"])[["F1 per bicluster","F1 per best match","n_biclusters"]]
-    r[("F1 per bicluster","n_runs")] =  r[("F1 per bicluster","count")]*1.0/n_bic_kinds
-    r = r.sort_values(by = ("F1 per bicluster","mean"), ascending= False)
+    r = r.groupby(by = params).agg(["mean","std","count","max","min"])[["Relevance","Recovery","n_biclusters"]]
+    r[(what,"n_runs")] =  r[(what,"count")]*1.0/n_bic_kinds
+    r = r.sort_values(by = (what,"mean"), ascending= False)
     if verbose:
-        print("\nOptimal parameters (max. avg. F1 per bicluster):")
+        print("\nwith Optimal parameters (%s --> max):"%what)
         param_values =  r.head(1).index.values[0]
         if not hasattr(param_values, '__iter__'): # this is for single parameter tuning
             param_values = [param_values]
         for p in zip(params,param_values):
             print("\t"+p[0]+"="+str(p[1])+";")
-        m = round(r.head(1).loc[:,("F1 per bicluster","mean")].values[0],3)
-        std = round(r.head(1).loc[:,("F1 per bicluster","std")].values[0],3)
-        print("\tMax. avg. F1 per bicluster:"+str(m)+u"\u00B1"+str(std))
-        m = round(r.head(1).loc[:,("F1 per best match","mean")].values[0],3)
-        std = round(r.head(1).loc[:,("F1 per best match","std")].values[0],3)
-        print("\tavg. F1 per best match:"+str(m)+u"\u00B1"+str(std))
-        m = round(r.head(1).loc[:,("n_biclusters","mean")].values[0],1)
-        std = round(r.head(1).loc[:,("n_biclusters","std")].values[0],1)
-        print("\tbiclusters per run:"+str(m)+u"\u00B1"+str(std))
+        for measure in ["Relevance","Recovery","n_biclusters"]:
+            m = round(r.head(1).loc[:,(measure,"mean")].values[0],3)
+            std = round(r.head(1).loc[:,(measure,"std")].values[0],3)
+            print("\tMax. avg. %s: %s u\u00B1 %s"% (what, m ,std))
         if default_params:
-            print("With default parameters:")
+            print("With Default parameters:")
             for p in zip(params,default_params):
                 print("\t"+p[0]+"="+str(p[1])+";")
-            m_def = round(r.loc[default_params,("F1 per bicluster","mean")],3)
-            std_def = round(r.loc[default_params,("F1 per bicluster","std")],3)
-            print("\tavg. F1 per bicluster:"+str(m_def)+u"\u00B1"+str(std_def))
-            m_def = round(r.loc[default_params,("F1 per best match","mean")],3)
-            std_def = round(r.loc[default_params,("F1 per best match","std")],3)
-            print("\tavg. F1 per best match:"+str(m_def)+u"\u00B1"+str(std_def))
-            m_def = round(r.loc[default_params,("n_biclusters","mean")],1)
-            std_def = round(r.loc[default_params,("n_biclusters","std")],1)
-            print("\tbiclusters per run:"+str(m_def)+u"\u00B1"+str(std_def))
+            for measure in ["Relevance","Recovery","n_biclusters"]:
+                m_def = round(r.loc[default_params,(measure,"mean")],3)
+                std_def = round(r.loc[default_params,(measure,"std")],3)
+                print("\tavg. %s: %s u\u00B1 %s"% (what, m ,std))
     return r
