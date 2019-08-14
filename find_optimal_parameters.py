@@ -351,7 +351,7 @@ def read_all_results(parameters,tool_name,n_runs=10, parse_biclust_func=parse_bi
     print("Non-zero runs:",results.loc[results["Relevance"]>0,:].shape[0])
     return results[["n_genes","n_samples"]+dict(param_combination).keys()+["n_biclusters","Relevance","Recovery"]]
 
-def plot_performance_heatmap(results,params,what="Relevance",f1_thr=0.05,g_sizes = [5,10,20,50,100], s_sizes = [10,20,50,100],
+def plot_performance_heatmap(results,params,what="Relevance",top=0, g_sizes = [5,10,20,50,100], s_sizes = [10,20,50,100],
                     plot=True,plot_file="",outfile=""):
     
     print("Total combinations:", results.loc[:,params].drop_duplicates().shape[0])
@@ -365,9 +365,11 @@ def plot_performance_heatmap(results,params,what="Relevance",f1_thr=0.05,g_sizes
     heatmap.fillna(0,inplace = True)
     heatmap.index.names = params
     heatmap.columns.names = ["genes","samples"]
-    print("Total combinations:", heatmap.shape[0])
-    heatmap_show = heatmap.loc[heatmap.apply(np.mean,axis=1)  > f1_thr,:]
-    print("Combinations with mean > "+str(f1_thr),heatmap_show.shape[0])
+    if not top == 0:
+        heatmap_show = heatmap.apply(np.mean,axis=1).sort_values(ascending=False).index.values[:top]
+        print(heatmap_show)
+        heatmap_show = heatmap.loc[heatmap.index.isin(heatmap_show),:]
+    print("Top %s paramter combinations" %(top))
     if plot:
         fig, ax = plt.subplots(figsize=(20,10*heatmap_show.shape[0]/40+1))
         sns.heatmap(heatmap_show,ax=ax, annot=True)
@@ -375,7 +377,7 @@ def plot_performance_heatmap(results,params,what="Relevance",f1_thr=0.05,g_sizes
             plt.savefig(plot_file)
     if outfile:
         heatmap.to_csv(outfile,sep="\t")
-    return heatmap 
+    return heatmap
 
 
 def get_opt_params(results, params, what="Relevance", more_n_smaples = 0, default_params = None, verbose=True):
@@ -401,15 +403,15 @@ def get_opt_params(results, params, what="Relevance", more_n_smaples = 0, defaul
         for measure in ["Relevance","Recovery","n_biclusters"]:
             m = round(r.head(1).loc[:,(measure,"mean")].values[0],3)
             std = round(r.head(1).loc[:,(measure,"std")].values[0],3)
-            print("\tMax. avg. %s: %s u\u00B1 %s"% (what, m ,std))
+            print(u"\tMax. avg. %s: %s \u00B1 %s"% (measure, m ,std))
         if default_params:
             print("With Default parameters:")
             for p in zip(params,default_params):
                 print("\t"+p[0]+"="+str(p[1])+";")
             for measure in ["Relevance","Recovery","n_biclusters"]:
-                m_def = round(r.loc[default_params,(measure,"mean")],3)
-                std_def = round(r.loc[default_params,(measure,"std")],3)
-                print("\tavg. %s: %s u\u00B1 %s"% (what, m ,std))
+                m = round(r.loc[default_params,(measure,"mean")],3)
+                std = round(r.loc[default_params,(measure,"std")],3)
+                print(u"\tavg. %s: %s \u00B1 %s"% (measure, m ,std))
     return r
 
 def read_DESMOND(file_name,delim=" ",genes2ints=False):
