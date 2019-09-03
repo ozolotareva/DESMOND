@@ -112,7 +112,7 @@ def parse_JBiclustGE(bic_file_path,n_runs=1):
                 full_bic_file_path = bic_results_dir + folder + "/JBiclustGE_csv.bicge"
                 f_pathes.append(full_bic_file_path)
     if len(f_pathes) != n_runs:
-        print("Warning: number of result files %s is different from expected n_runs=%s" % (len(f_paths),n_runs))
+        print("Warning: number of result files %s is different from expected n_runs=%s" % (len(f_pathes),n_runs))
     runs = []
     run = 1
     for f_path in f_pathes:
