@@ -47,7 +47,7 @@ def prepare_input_data(exprs_file, network_file, verbose = True, min_n_nodes = 3
     network_genes = network.nodes()
     ccs = list(nx.connected_component_subgraphs(network))
     if verbose:
-        print("Input:\n","\texpressions:",len(exprs_genes),"genes x",len(set(exprs.columns.values)),"patients;",
+        print("Input:\n","\texpressions:",len(exprs_genes),"genes x",len(set(exprs.columns.values)),"samples;",
               "\n\tnetwork:",len(network_genes),"genes,",len(network.edges()) ,"edges in",len(ccs),"connected components:"
               ,file=sys.stdout)
 
@@ -79,9 +79,9 @@ def prepare_input_data(exprs_file, network_file, verbose = True, min_n_nodes = 3
     
     
     if verbose:
-        print("Processed Input:\n","\texpressions:",len(exprs.index.values),"genes x",len(set(exprs.columns.values)),"patients;",
+        print("Processed Input:\n","\texpressions:",len(exprs.index.values),"genes x",len(set(exprs.columns.values)),"samples;",
                   "\n\tnetwork:",len(network_genes),"genes ",len(network.edges()) ,"edges in",len(ccs),"connected components:",file=sys.stdout)
-        return exprs, network 
+    return exprs, network 
 
 def rename_ndex_nodes(G,attribute_name="name"):
     rename_nodes = {}
@@ -111,6 +111,9 @@ def load_network(infile_name, verbose = True):
     '''Reads subnetworks from file.'''
     # read from file
     network = nx.read_edgelist(infile_name)
+    for n1,n2 in network.edges():
+        if "samples" in network[n1][n2].keys():
+            network[n1][n2]["samples"] = set(network[n1][n2]["samples"])
     try:
         network = nx.relabel_nodes(network,int)
     except:
@@ -121,12 +124,13 @@ def load_network(infile_name, verbose = True):
 
 def save_network(network,outfile_name, verbose = True):
     t0 = time.time()
-    '''Writes subnetwork with associated patients on edges.'''
+    '''Writes subnetwork with associated samples on edges.'''
     # make graph of n subnetworks
     to_save = []
-    # modify patients: set -> list 
+    # modify samples: set -> list 
     for n1,n2 in network.edges():
-        network[n1][n2]["patients"] = list(network[n1][n2]["patients"])
+        if "samples" in network[n1][n2].keys():
+            network[n1][n2]["samples"] = list(network[n1][n2]["samples"])
     # save to file
     nx.write_edgelist(network,outfile_name, data=True)
     if verbose:
@@ -143,20 +147,24 @@ def load_object(filename):
     t_0 = time.time()
     with open(filename, 'rb') as input:
         obj = pickle.load(input)
+    # network 
+    
     print("loaded data in from file",filename,round(time.time()- t_0,1) , "s", file = sys.stdout)
     return obj
 
 ###### save modules ####################
-def write_modules(bics,file_name):
-    fopen = open(file_name,"w")
-    for bic in bics:
-        print("id:\t"+str(bic["id"]), file=fopen)
-        print("average SNR:\t"+str(bic["avgSNR"]),file=fopen)
-        print("genes:\t"+" ".join(map(str,bic["genes"])),file=fopen)
-        print("samples:\t"+" ".join(map(str,bic["samples"])),file=fopen)
-    fopen.close()
-    print(str(len(bics)),"modules written to",file_name,file = sys.stdout)
-    
+def write_bic_table(resulting_bics, results_file_name):
+    if len(resulting_bics) ==0 :
+        pass
+    else:
+        resulting_bics = pd.DataFrame.from_dict(resulting_bics)
+        resulting_bics["n_genes"] = resulting_bics["genes"].apply(len)
+        resulting_bics["n_samples"] =  resulting_bics["samples"].apply(len)
+        resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(map(str,x)))
+        resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(map(str,x)))
+        resulting_bics = resulting_bics[["id","avgSNR","n_genes","n_samples","direction","genes","samples"]]
+        resulting_bics.sort_values(by=["avgSNR","n_genes","n_samples"],inplace = True, ascending = False)
+    resulting_bics.to_csv(results_file_name ,sep = "\t")
     
 ### plots numnber of oscilating edges and RMS(Pn-Pn+1)
 def plot_convergence(n_skipping_edges,P_diffs, thr_step,n_steps_averaged, outfile = ""):
@@ -179,7 +187,7 @@ def plot_edge2sample_dist(network,outfile):
     n_samples = []
     for edge in network.edges():
         n1,n2 = edge
-        samples = len(network[n1][n2]["patients"])
+        samples = len(network[n1][n2]["samples"])
         n_samples.append(samples)
         # mask edges with not enough samples
     tmp = plt.hist(n_samples,bins=50)
@@ -205,18 +213,3 @@ def plot_bic_stats(bics, outfile):
     tmp = plt.title("avg. |SNR|")
     plt.savefig(outfile, transparent=True)
     
-def parse_DESMOND(file_name,delim=" ",genes2ints=False):
-    bics = []
-    with open(file_name,"r") as infile:
-        for line in infile.readlines():
-            line =line.rstrip().split("\t")
-            if line[0] == "id:":
-                bic = {"id":int(line[1])}
-            if line[0] == "average SNR:":
-                bic["avgSNR"] = float(line[1])
-            if line[0] == "genes:":
-                bic["genes"] = set(line[1].split(delim))
-            if line[0] == "samples:":
-                bic["samples"] = set(line[1].split(delim))
-                bics.append(bic)
-    return bics

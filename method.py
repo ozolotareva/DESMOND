@@ -12,6 +12,8 @@ from fisher import pvalue
 import itertools
 import math
 
+from sklearn.cluster import KMeans
+
 import networkx as nx
 
 import matplotlib
@@ -55,16 +57,23 @@ def hg_test(rlist1,rlist2,t_u,t_w, return_items = False):
     else:
         return p_val, enrichment, overlap_size
 
-def partialRRHO(gene1,gene2,subnet,rhho_thrs,fixed_step=10, verbose = False):
+    
+def partialRRHO(gene1,gene2,subnet,rhho_thrs,min_SNR=0.5,min_n_samples=8,fixed_step=10, verbose = False):
     '''Searches for thresholds corresponding to optimal patient overlap. 
-    The overlap is optimal if 1). it passes significance threshold in hypergeometric test 2). its size is maximal 
-    \nReturns group of patients with gene expressions above selected thresholds.
+    The overlap is optimal if
+    \n1). it passes significance threshold in hypergeometric test;
+    \n2). resulting set of samples inuces a bicluster with SNR higher than 'min_SNR' threshold;
+    \n3). its size is maximal.
+    \n
+    \nReturns group of samples with gene expressions above selected thresholds.
     \ngene1, gene2 - genes to compare,
     \nexprs_profile_dict - a dictionary with gene expression profiles
     '''
     t_0 = time.time()
-    rlist1 = subnet.node[gene1]["exprs"].index.values
-    rlist2 = subnet.node[gene2]["exprs"].index.values
+    e1 = subnet.node[gene1]["exprs"]
+    e2 = subnet.node[gene2]["exprs"]
+    rlist1 = e1.index.values
+    rlist2 = e2.index.values
 
     # pick point with maximum overlap with p-value < thr
     p_val = 1
@@ -83,19 +92,28 @@ def partialRRHO(gene1,gene2,subnet,rhho_thrs,fixed_step=10, verbose = False):
                 t_u = t_u0-fixed_step*elem[0]
                 t_w = t_w0-fixed_step*elem[1]
                 if t_u > 0 and t_w >0:
-                    #p_val, enrichment, patients = hg_test(rlist1,rlist2,t_u,t_w,return_items=True)
-                    patients = set(rlist1[:t_u]).intersection(set(rlist2[:t_w]))
-                    if len(patients) > rhho_thrs[t_u][t_w]:
-                        stop_condition = True
-                        if len(patients) > len(optimal_patient_set):
-                            optimal_thresholds = (t_u, t_w)
-                            optimal_patient_set = patients
-                        elif len(patients) == len(optimal_patient_set):
-                            if abs(t_u-t_w) < abs(optimal_thresholds[0] - optimal_thresholds[1]):
+                    #p_val, enrichment, samples = hg_test(rlist1,rlist2,t_u,t_w,return_items=True)
+                    samples = set(rlist1[:t_u]).intersection(set(rlist2[:t_w]))
+                    if len(samples) > rhho_thrs[t_u][t_w]:
+                        SNR = []
+                        for e in [e1,e2]:
+                            e_in = e[e.index.isin(samples)].values
+                            e_out = e[~e.index.isin(samples)].values
+                            SNR.append(abs(e_in.mean()-e_out.mean())/(e_in.std()+e_out.std()))
+                        SNR = (SNR[0]+SNR[1])/2
+                        if SNR >= min_SNR:
+                            stop_condition = True
+                            if len(samples) > len(optimal_patient_set):
                                 optimal_thresholds = (t_u, t_w)
-                                optimal_patient_set = patients
-                        else:
-                            pass
+                                optimal_patient_set = samples
+                            elif len(samples) == len(optimal_patient_set):
+                                if abs(t_u-t_w) < abs(optimal_thresholds[0] - optimal_thresholds[1]):
+                                    optimal_thresholds = (t_u, t_w)
+                                    optimal_patient_set = samples
+                            else:
+                                pass
+                    if len(samples) <= min_n_samples:
+                        stop_condition = True 
                 else:
                     stop_condition=True
                     break
@@ -103,13 +121,13 @@ def partialRRHO(gene1,gene2,subnet,rhho_thrs,fixed_step=10, verbose = False):
         i+=1
     if verbose:
         if len(optimal_patient_set) >0 :
-            print("runtime:",round(time.time()-t_0,5),"s","Best ovelap for",(gene1,gene2),"occurs at thresholds",optimal_thresholds,"and contains",len(optimal_patient_set),"patients",file = sys.stderr)
+            print("runtime:",round(time.time()-t_0,5),"s","Best ovelap for",(gene1,gene2),"occurs at thresholds",optimal_thresholds,"and contains",len(optimal_patient_set),"samples",file = sys.stderr)
         else:
             print("runtime:",round(time.time()-t_0,5),"s","No significant overlap for",(gene1,gene2),file = sys.stderr)
     #print("partialRRHO() runtime:",round(time.time()-t_0,5),"s",file=sys.stderr)        
     return optimal_patient_set
 
-#### Assign sets of patients on edges ####
+#### Assign sets of samples on edges ####
 def expression_profiles2nodes(subnet, exprs, direction,verbose = True):
     t_0 = time.time()
     '''Associates sorted expression profiles with nodes. Removes nodes without expressions.
@@ -142,28 +160,18 @@ def expression_profiles2nodes(subnet, exprs, direction,verbose = True):
     print("expression_profiles2nodes()\truntime:",round(time.time()-t_0,5),"s",file=sys.stdout)
     return subnet
 
-def assign_patients2edges(subnet, method="top_half",fixed_step=10,rrho_thrs = False, verbose=True):
+def assign_patients2edges(subnet,min_SNR=0.5,min_n_samples=8, fixed_step=10,rrho_thrs = False, verbose=True):
     t0 = time.time()
     # mark all edges as not masked
-    # assign patients to every edge: 
+    # assign samples to every edge: 
     edge2pats = {}
     i = 0
     runtimes = []
     for edge in subnet.edges():
         n1, n2 = edge
         t_0 = time.time()
-        if method=="top_half":
-            # just takes overlap of top_n in both lists 
-            p1 = subnet.node[n1]["exprs"].index.values
-            p2 = subnet.node[n2]["exprs"].index.values
-            up = top_n(p1,p2,n=len(p1)/2)
-        elif method=="RRHO":
-            #if not type(rrho_thresholds) == pd.core.frame.DataFrame:
-            #    print("Pre-compute thresholds for RRHO",file = sys.stderr)
-            up = partialRRHO(n1,n2,subnet,rrho_thrs,fixed_step=fixed_step,verbose=False)
-        else:
-            if verbose : 
-                print("'method' must be one of 'top_half' or 'RRHO'.",file = sys.stdout)
+        up = partialRRHO(n1,n2,subnet,rrho_thrs,min_SNR=min_SNR,min_n_samples=min_n_samples,
+                            fixed_step=fixed_step,verbose=False)
         runtimes.append(time.time() - t_0)
         i+=1
         if i%1000 == 0 and verbose:
@@ -171,13 +179,12 @@ def assign_patients2edges(subnet, method="top_half",fixed_step=10,rrho_thrs = Fa
         #if n1 in seeds2 and n2 in seeds2:
         #    print(edge, len(up), len(down))
         #edge2pats[edge] = up
-        subnet[n1][n2]["patients"] = up
+        subnet[n1][n2]["samples"] = up
         subnet[n1][n2]["masked"] = False
     print("assign_patients2edges()\truntime, s:", round(time.time() - t0,4),"for subnetwork of",len(subnet.nodes()),"nodes and",
           len(subnet.edges()),"edges.", file = sys.stdout)
-    #nx.set_edge_attributes(subnet, 'patients', edge2pats)
+    #nx.set_edge_attributes(subnet, 'samples', edge2pats)
     return subnet
-
 
 #### get rid of empty edges after RRHO ####
 def mask_empty_edges(network,min_n_samples=10,remove = False, verbose = True):
@@ -187,9 +194,9 @@ def mask_empty_edges(network,min_n_samples=10,remove = False, verbose = True):
     n_retained = 0
     for edge in network.edges():
         n1,n2 = edge
-        pats = len(network[n1][n2]["patients"])
+        pats = len(network[n1][n2]["samples"])
         n_pats.append(pats)
-        # mask edges with not enough patients 
+        # mask edges with not enough samples 
         if pats < min_n_samples:
             if remove:
                 network.remove_edge(n1,n2)
@@ -250,12 +257,12 @@ def set_initial_conditions(network,exprs, verbose = True):
     # 1. the number of edges inside each component, initially 1 for each component
     moduleSizes=np.ones(len(network.edges()),dtype=np.int)
     
-    # 2. a binary (int) matrix of size n by m that indicates the patients on the edges
+    # 2. a binary (int) matrix of size n by m that indicates the samples on the edges
     edge2Patients = []
     all_pats = list(exprs.columns.values)
     for edge in network.edges():
         n1,n2 = edge
-        pats_in_module = network[n1][n2]["patients"]
+        pats_in_module = network[n1][n2]["samples"]
         x = np.zeros(len(all_pats), dtype=np.int)
         i = 0
         for p in all_pats:
@@ -274,7 +281,7 @@ def set_initial_conditions(network,exprs, verbose = True):
     i = 0
     for n1,n2,data in network.edges(data=True):
         del data['masked']
-        del data['patients']
+        del data['samples']
         data['m'] = i
         data['e'] = i
         i+=1
@@ -382,10 +389,25 @@ def check_convergence_conditions(n_skipping_edges,n_skipping_edges_range,
     return convergence     
         
 ### sample and update model when necessary 
-def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleSizes,
+def sampling(network, exprs,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleSizes,
              moduleOneFreqs, p0, match_score, mismatch_score, bK_1,log_func=np.log, alpha = 0.1, beta_K = 1.0,
              max_n_steps=100,n_steps_averaged = 20,n_points_fit = 10,tol = 0.1,
-             n_steps_for_convergence = 5,verbose=True):
+             n_steps_for_convergence = 5,verbose=True, edge_ordering ="corr"):
+    if edge_ordering =="corr":
+        ### define edge order depending on gene expression corelations:
+        t0= time.time()
+        from scipy.stats.stats import pearsonr
+        edge_corrs = []
+        for g1,g2 in network.edges():
+            r,pv = pearsonr(exprs.loc[g1,:].values,exprs.loc[g2,:].values)
+            edge_corrs.append(-r)
+        edge_order = np.argsort(edge_corrs)
+        print("Top correlations:",edge_corrs[edge_order[0]],edge_corrs[edge_order[1]],edge_corrs[edge_order[2]])
+        edge_corrs = [] # do not store
+        print("Correlations computed in %s s" % round(time.time()-t0,2))
+    else:
+        # shuffle edges
+        edge_order = range(0, edge2Patients.shape[0])
     t_ =  time.time()
     edge2Module_history = [copy.copy(edge2Module)]
     #n_edge_skip_history = [0]
@@ -398,8 +420,10 @@ def sampling(network,edge2Module, edge2Patients,nOnesPerPatientInModules,moduleS
         t_0 = time.time()
         t_1=t_0
         i = 1
-        random.shuffle(network_edges)
-        for n1,n2,data in network_edges:
+        if edge_ordering == "shuffle":
+            random.shuffle(edge_order)
+        for edge_index in edge_order:
+            n1,n2,data = network_edges[edge_index]
             # adjust LogP and sample a new module
             p = adjust_lp(data['log_p'],n_exp_orders=7)
             curr_module = data['m']
@@ -585,24 +609,7 @@ def get_consensus_modules(edge2module_history, network, edge2Patients, edge2Modu
 
 ################################## 3. Post-processing ##########################################
 
-def identify_opt_sample_set(n_ones, exprs,genes, min_n_samples=50):
-    best_sample_set = []
-    best_SNR = 0
-    best_thr = -1
-    freq_ones = 1.0*n_ones/len(genes)
-    thresholds = sorted(list(set(freq_ones)),reverse=True)
-    for thr in thresholds:
-        ndx = np.where(freq_ones >= thr)[0]
-        samples = exprs.iloc[:,ndx].columns.values
-        if len(samples) > exprs.shape[1]/2: # stop when 1/2 samples included
-            return best_sample_set, best_thr, best_SNR
-        if len(samples) > min_n_samples:
-            avgSNR =  bicluster_avg_SNR(exprs,genes=genes,samples=samples)
-            if avgSNR > best_SNR: 
-                best_SNR = avgSNR 
-                best_sample_set = samples
-                best_thr = thr
-    
+
 
 def get_genes(mid,edge2module,edges):
     ndx = [i for i, j in enumerate(edge2module) if j == mid]
@@ -622,117 +629,6 @@ def bicluster_avg_SNR(exprs,genes=[],samples=[]):
     SNR = (bic.mean(axis=1) - out.mean(axis=1))/(bic.std(axis=1)+out.std(axis=1))
     return np.mean(abs(SNR))
 
-def merge_modules(bics,nOnesPerPatientInModules,moduleSizes,exprs,
-                 min_sample_overlap = 0.5,min_acceptable_SNR_percent=0.9,min_n_samples=50, verbose = True):
-    
-    t_0 = time.time()
-    
-    SNRs = [bic["avgSNR"] for bic in bics]
-    if verbose:
-        print("Input:", len(bics),"modules to merge", file = sys.stdout)
-    
-    ############## prepare sample overlap matrix  #########
-    pat_overlap = np.zeros((len(bics),len(bics)))
-    for i in range(0,len(bics)):
-        bic_i = bics[i]
-        for j in range(0,len(bics)):
-            if i !=j:
-                bic_j = bics[j]
-                shared_genes = len(bic_i["genes"].intersection(bic_j["genes"]))
-                shared_pats = float(len(bic_i["samples"].intersection(bic_j["samples"])))
-                mutual_overlap = min(shared_pats/len(bic_i["samples"]),shared_pats/len(bic_j["samples"]))
-                pat_overlap[i,j] = mutual_overlap 
-    
-    ############ run merging #############
-    closed_modules = []
-    while len(bics) > 0:
-        ndx = np.argmax(SNRs)
-        bic = bics[ndx]
-        if verbose:
-            print("Grow module:",bic["id"],"avg.|SNR|",bic["avgSNR"], "samples:",len(bic["samples"]), "genes:",  len(bic["genes"]))
-        best_candidate_ndx = -1
-        best_new_SNR = min_acceptable_SNR_percent*SNRs[ndx]
-        best_pat_set = bic["samples"]
-        candidate_ndxs = np.where(pat_overlap[ndx,:] >= min_sample_overlap )[0]
-        for candidate_ndx in candidate_ndxs:
-            bic2 = bics[candidate_ndx]
-            if verbose:
-                print("\t trying module:",bic2["id"],"avg.|SNR|",bic2["avgSNR"], "samples:",len(bic2["samples"]), "genes:", len(bic2["genes"]), "sample overlap:",pat_overlap[ndx,candidate_ndx])
-            new_pats, new_SNR = calc_new_SNR(bic, bic2 ,exprs, nOnesPerPatientInModules,moduleSizes,min_n_samples=min_n_samples)
-            if verbose:
-                print("\t\t new avg.|SNR|:",new_SNR, "new samples",len(new_pats),"passed:",new_SNR > best_new_SNR)
-            if new_SNR > best_new_SNR:
-                #print("\t\t set SNR:", best_new_SNR, "-->", new_SNR, "and select",candidate_ndx)
-                best_new_SNR = new_SNR
-                best_candidate_ndx  =  candidate_ndx
-                best_pat_set = new_pats
-        if best_candidate_ndx >= 0:
-            if verbose:
-                print("\tmerge",bic["id"],"+",bics[best_candidate_ndx]["id"], "new avg.|SNR|",best_new_SNR,"samples:",len(best_pat_set),"genes:",len(set(bic["genes"].union(set(bics[best_candidate_ndx]["genes"])))))
-            # add bic2 to bic and remove bic2
-            bics, SNRs, pat_overlap, nOnesPerPatientInModules, moduleSizes = add_bic(ndx, best_candidate_ndx,bics, set(best_pat_set), best_new_SNR, SNRs,pat_overlap,nOnesPerPatientInModules,moduleSizes)
-            # continue - pick new ndx_max
-        else:
-            if verbose:
-                print("no more candidates to merge for ", bic["id"])
-            # close module if no candidates for merging found
-            closed_modules.append(bic)
-            if verbose:
-                print(bic["id"],"----------- closed. ")
-            # remove module from all data structures
-            bics, SNRs,pat_overlap = remove_bic(ndx, bics, SNRs, pat_overlap)
-    print("merging finished in",round(time.time()- t_0,2) , "s", file = sys.stdout)
-    return closed_modules
-
-
-def add_bic(ndx, ndx2, bics, new_pats, new_SNR, SNRs,pat_overlap, nOnesPerPatientInModules,moduleSizes):
-    '''merges bic2 to bic and removes bic2'''
-    bic = bics[ndx]
-    bic2 = bics[ndx2]
-    mid = bic["id"]
-    mid2 = bic2["id"]
-    # update nOnesPerPatientInModules,moduleSizes by mid
-    nOnesPerPatientInModules[mid,:] +=  nOnesPerPatientInModules[mid2,:] 
-    moduleSizes[mid] += moduleSizes[mid2]
-    nOnesPerPatientInModules[mid2,:] = 0
-    moduleSizes[mid2] = 0
-    # bic := bic + bic2
-    bic["genes"]  =  bic["genes"] | bic2["genes"]
-    bic["samples"] =  new_pats
-    bic["avgSNR"] = new_SNR
-    # update bic in bics, SNRs,pat_overlap
-    bics[ndx] = bic
-    SNRs[ndx] = new_SNR
-    for j in range(0,len(bics)):
-        if j !=ndx:
-            shared_genes = len(bic["genes"].intersection(bics[j]["genes"]))
-            if shared_genes > 0:
-                shared_pats = float(len(bic["samples"].intersection(bics[j]["samples"])))
-                mutual_overlap = min(shared_pats/len(bic["samples"]),shared_pats/len(bics[j]["samples"]))
-                pat_overlap[ndx,j] = mutual_overlap 
-                pat_overlap[j,ndx] = mutual_overlap
-    # remove bic2
-    bics, SNRs,pat_overlap = remove_bic(ndx2, bics, SNRs,pat_overlap)
-    return bics, SNRs, pat_overlap, nOnesPerPatientInModules,moduleSizes
-
-def remove_bic(ndx, bics, SNRs,pat_overlap):
-    bic = bics[ndx]
-    mid = bic["id"]
-    # from bics, SNRs,pat_overlap by ndx
-    bics = bics[:ndx] +  bics[ndx+1:]
-    SNRs = SNRs[:ndx] +  SNRs[ndx+1:]
-    pat_overlap = np.delete(pat_overlap, ndx, axis=1)
-    pat_overlap = np.delete(pat_overlap, ndx, axis=0)
-    return bics, SNRs,pat_overlap
-
-def calc_new_SNR(bic, bic2,exprs, nOnesPerPatientInModules,moduleSizes,min_n_samples=50):
-    n_ones = nOnesPerPatientInModules[bic["id"],]+nOnesPerPatientInModules[bic2["id"],]
-    m_size = moduleSizes[bic["id"],]+moduleSizes[bic2["id"],]
-    genes  = set(bic["genes"]).union(bic2["genes"])
-    pats, thr, avgSNR = identify_opt_sample_set(n_ones, exprs, genes, min_n_samples=min_n_samples)
-    return pats, avgSNR
-
-#### evaluation ### 
 def bicluster_corrs(exprs,genes=[],samples=[]):
     if len(samples) > 0 :
         mat = exprs.loc[genes,samples]
@@ -740,53 +636,52 @@ def bicluster_corrs(exprs,genes=[],samples=[]):
         mat = exprs.loc[genes, :]
     corrs  = []
     for g1,g2 in itertools.combinations(genes,2):
-        corr = np.corrcoef(mat.loc[g1,:].values, mat.loc[g2].values)[0][1]
+        corr = np.corrcoef(mat.loc[g1,:].values, mat.loc[g2,:].values)[0][1]
         corrs.append(corr)
     return round(np.average(corrs),2), round(np.min(corrs),2), round(np.max(corrs),2)
 
-
-def merge_biclsuters(bic, bic2, exprs, min_n_samples, direction="UP", min_SNR=0.5, max_SNR_decrease=0.1):
-    new_bic = {"id":bic["id"]}
-    genes = bic["genes"].union(bic2["genes"])
-    new_bic["genes"] = genes
-    new_bic["n_genes"] = len(genes)
-    best_avgSNR =  min_SNR
-    best_thr = -1
-    if direction == "UP":
-        ascending = False
-    else:
-        ascending = True
-        
+def identify_opt_sample_set(genes, exprs,direction="UP",min_n_samples=8):
     e = exprs.loc[genes,:]
-    ordered_samples = e.mean(axis =0).sort_values(ascending = False).index
-    e = e.loc[:,ordered_samples].values.T
-    for i in range(min_n_samples,exprs.shape[1]/2):
-        avgSNR = abs(np.mean((e[0:i,:].mean() - e[i:,:].mean())/(e[0:i,:].std() + e[i:,:].std())))
-        if avgSNR > best_avgSNR:
-            
-            best_avgSNR = avgSNR
-            best_thr = i
-    if best_thr > 0 or best_avgSNR < (1-max_SNR_decrease)*max(bic["avgSNR"],bic2["avgSNR"]):
-        samples = set(ordered_samples.values[:best_thr])
-        new_bic["samples"] = samples
-        new_bic["n_samples"] = len(samples)
-        new_bic["avgSNR"] = best_avgSNR
-        
+    N = exprs.shape[1]
+    labels = KMeans(n_clusters=2, random_state=0).fit(e.T).labels_
+    ndx0 = np.where(labels == 0)[0]
+    ndx1 = np.where(labels == 1)[0]
+    if min(len(ndx1),len(ndx0))< min_n_samples:
+        return {"avgSNR":-1}
+    if np.mean(e.iloc[:,ndx1].mean()) > np.mean(e.iloc[:,ndx0].mean()):
+        if direction=="UP":ndx = ndx1
+        else: ndx = ndx0
     else:
-        new_bic["avgSNR"] = 0
-    return new_bic
-    
-def do_merging(biclusters, exprs, min_n_samples=8,verbose = True,direction="UP", min_SNR=0.5, max_SNR_decrease=0.1, J_threshold=0.5):
+        if direction=="UP":ndx = ndx0
+        else: ndx = ndx1
+    samples = e.columns[ndx]
+    avgSNR = bicluster_avg_SNR(exprs,genes=genes,samples=samples)
+    if len(samples)>N*0.5: # invert biclusters spanning more than 50% of patients 
+        if direction == "UP": 
+            bic_direction = "DOWN"
+        else: 
+            bic_direction = "UP"
+        samples = set(e.columns).difference(samples)
+    else:
+        bic_direction = direction
+    bic = {"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"direction":bic_direction}
+    return bic
+
+
+#### Merging  ### 
+def merge_biclusters(biclusters, exprs, min_n_samples=8,verbose = True,direction="UP", min_SNR=0.5,
+               max_SNR_decrease=0.1, J_threshold=0.5):
     t0 = time.time()
-    bics = copy.copy(biclusters)
+    bics = dict(zip([x["id"] for x in biclusters],biclusters))
     merged_bics = []
+    N = exprs.shape[1]
     for bic_id in bics.keys():
         if bic_id in bics.keys():
-            candidates = []
+            candidate_ids = []
             n_merges = 0
             bic = bics[bic_id]
             if verbose:
-                print("Candidates for merging with bicluster %s, avg.SNR=%s :" % (bic["id"],round(bic["avgSNR"],2)))
+                print("Candidates for merging with bicluster %s: %sx%s, avg.SNR=%s :" % (bic["id"],len(bic["genes"]),len(bic["samples"]),round(bic["avgSNR"],2)))
             for bic2_id in bics.keys():
                 if bic_id!= bic2_id:
                     bic2 = bics[bic2_id]
@@ -794,40 +689,53 @@ def do_merging(biclusters, exprs, min_n_samples=8,verbose = True,direction="UP",
                     u_samples = bic["samples"].union(bic2["samples"])
                     J = (1.0*len(sh_samples))/len(u_samples)
                     if J>J_threshold:
-                        candidates.append(bic2)
-                        
+                        candidate_ids.append(bic2_id)
+
 
             no_merge = False
-            while len(candidates)>0 and not no_merge:
+            while len(candidate_ids)>0 and not no_merge:
                 bm_id, best_new_bic, best_avgSNR = False, False, min_SNR
                 no_merge = True
-                for i in range(0,len(candidates)):
-                    bic2 = candidates[i]
-                    # create a new bicsluter from bic and bic2
-                    new_bic = merge_biclsuters(bic, bic2, exprs, min_n_samples=min_n_samples,
-                                              direction=direction, min_SNR = min_SNR, max_SNR_decrease = max_SNR_decrease)
-                    if new_bic["avgSNR"]> best_avgSNR:
-                        bm_id,bm_ndx = bic2["id"], i
+                for bic2_id in candidate_ids:
+                    bic2 = bics[bic2_id]
+                    # try creating a new bicsluter from bic and bic2
+                    genes = bic2["genes"] | bic["genes"] 
+                    new_bic = identify_opt_sample_set(genes, exprs,
+                                                      direction=direction,
+                                                      min_n_samples=min_n_samples)
+                    avgSNR = new_bic["avgSNR"]
+                    if avgSNR >= best_avgSNR:
+                        best_avgSNR = avgSNR
+                        bm_id = bic2_id
                         best_new_bic = new_bic
-                        best_avgSNR = new_bic["avgSNR"]
+                        best_new_bic["n_genes"] = len(best_new_bic["genes"])
+                        best_new_bic["n_samples"] = len(best_new_bic["samples"])
+
                 if bm_id:
-                    no_merge =  False
-                    if verbose:
-                        print("\tMerge biclusters %s:%sx%s and %s:%sx%s --> %s SNR and %sx%s"% (bic_id, bic["n_genes"], bic["n_samples"],
-                                                                                            bm_id,bics[bm_id]["n_genes"],bics[bm_id]["n_samples"],
-                                                                                            round(best_new_bic["avgSNR"],2),
-                                                                                            best_new_bic["n_genes"],best_new_bic["n_samples"]))
-                    bic = best_new_bic
                     n_merges +=1
+                    no_merge =  False
+
+                    if verbose:
+                        substitution = (bic_id, len(bic["genes"]),len(bic["samples"]),
+                                        bm_id, len(bics[bm_id]["genes"]),len(bics[bm_id]["samples"]),
+                                        round(best_new_bic["avgSNR"],2),best_new_bic["n_genes"],
+                                        best_new_bic["n_samples"])
+                        print("\tMerge biclusters %s:%sx%s and %s:%sx%s --> %s SNR and %sx%s"%substitution)
+                    best_new_bic["id"] = bic_id
+                    bic = best_new_bic
                     # delete bic2 
                     # from candidates
-                    del candidates[bm_ndx]
-                    # from the list 
+                    candidate_ids.remove(bm_id)
+                    # from biclusters 
                     del bics[bm_id]
+
             merged_bics.append(bic)
+
             if verbose:
                 print("%s biclusters joined to bicluster %s." % (n_merges,bic_id))
-                print("Resulting bicluster %sx%s SNR=%s." % (bic["n_genes"],bic["n_samples"],
+                print("Resulting bicluster %sx%s SNR=%s." % (len(bic["genes"]),len(bic["samples"]),
                                                             (round(bic["avgSNR"],2))))
-    print("Merging finished in:",round(time.time()-t0,2))
+    if verbose:
+        print("time:\tMerging finished in:",round(time.time()-t0,2))
     return merged_bics
+

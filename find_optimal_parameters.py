@@ -365,10 +365,11 @@ def plot_performance_heatmap(results,params,what="Relevance",top=0, g_sizes = [5
     heatmap.fillna(0,inplace = True)
     heatmap.index.names = params
     heatmap.columns.names = ["genes","samples"]
+    heatmap_show = heatmap.apply(np.mean,axis=1).sort_values(ascending=False).index.values
     if not top == 0:
-        heatmap_show = heatmap.apply(np.mean,axis=1).sort_values(ascending=False).index.values[:top]
+        heatmap_show = heatmap_show[:top]
         print(heatmap_show)
-        heatmap_show = heatmap.loc[heatmap.index.isin(heatmap_show),:]
+    heatmap_show = heatmap.loc[heatmap.index.isin(heatmap_show),:]
     print("Top %s paramter combinations" %(top))
     if plot:
         fig, ax = plt.subplots(figsize=(20,10*heatmap_show.shape[0]/40+1))
@@ -378,7 +379,6 @@ def plot_performance_heatmap(results,params,what="Relevance",top=0, g_sizes = [5
     if outfile:
         heatmap.to_csv(outfile,sep="\t")
     return heatmap
-
 
 def get_opt_params(results, params, what="Relevance", more_n_smaples = 0, default_params = None, verbose=True):
     if more_n_smaples > 0:

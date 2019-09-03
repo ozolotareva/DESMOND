@@ -17,10 +17,11 @@ import copy
 import random
 import argparse
 import pickle
+import math
 
 sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
 
-from desmond_io import prepare_input_data, save_object, load_object
+from desmond_io import prepare_input_data
 from method import get_consensus_modules
 
 
@@ -30,7 +31,7 @@ parser = argparse.ArgumentParser(description="""Searches for gene sets different
 parser.add_argument('-e','--exprs', dest='exprs_file', type=str, help='Expression matrix with sample name in columns and gene in rows, tab-separated.', default='', required=True,metavar='exprs_zscores.tsv')
 parser.add_argument('-n','--network', dest='network_file', type=str, help='Network in tab or NDEx2 format.', default='', required=True, metavar='network.cx')
 parser.add_argument('-d','--direction', dest='direction', type=str, help='Direction of dysregulation: UP or DOWN', default='UP', required=False)
-parser.add_argument('-m','--method', dest='method', type=str, help='How to assign patients on edges: RHHO or top_halves', default='RRHO', required=False)
+#parser.add_argument('-m','--method', dest='method', type=str, help='How to assign patients on edges: RHHO or top_halves', default='RRHO', required=False)
 parser.add_argument('-basename','--basename', dest='basename', type=str, help='Output basename without extention. If no outfile name provided output will be set "results_hh:mm_dddd-mm-yy".', default='', required=False)
 
 parser.add_argument('-o','--out_dir', dest='out_dir', type=str, help='Output directory.', default='.', required=False)
@@ -41,9 +42,10 @@ parser.add_argument('--p_val', dest='p_val', type=float, help='Significance thre
 parser.add_argument('--max_n_steps', dest='max_n_steps', type=int, help='Maximal number of steps.', default=50, required=False)
 parser.add_argument('--n_steps_averaged', dest='n_steps_averaged', type=int, help='Number of last steps analyzed when checking convergence condition. Values less than 10 are not recommended.', default=20, required=False)
 parser.add_argument('--n_steps_for_convergence', dest='n_steps_for_convergence', type=int, help='Required number of steps when convergence conditions is satisfied.', default=5, required=False)
+parser.add_argument('--min_n_samples', dest='min_n_samples', type=int, help='Minimal number of samples on edge.', default=-1, required=False)
 ### merging and filtering parameters
 parser.add_argument('--min_SNR', dest='min_SNR', type=float, help='SNR threshold for biclusters to consider.', default=0.5, required=False)
-parser.add_argument('--min_sample_overlap', dest='min_sample_overlap', type=float, help='', default=0.5, required=False)
+parser.add_argument('-J','--min_sample_overlap', dest='J', type=float, help='minimal Jaccard index for two candidates for merging', default=0.5, required=False)
 parser.add_argument('--allowed_SNR_decrease', dest='allowed_SNR_decrease', type=float, help='maximum allowed percent of SNR decrease when merge two modules', default=0.1, required=False)
 
 ### plot flag
@@ -62,14 +64,6 @@ args = parser.parse_args()
 if args.verbose:
     print("NetworkX version:",nx.__version__, "; must be < 2.", file = sys.stdout)
     
-if not args.direction in ["UP","DOWN"]:
-    print("Direction of dysregulatoin must be 'UP' or 'DOWN'.", file = sys.stderr)
-    exit(1)
-    
-if not args.method in ["RRHO","top_half"]:
-    print("Method must be 'RRHO' or 'top_half'.", file = sys.stderr)
-    exit(1) 
-    
 if args.verbose:
     print("Expression:",args.exprs_file, 
           "\nNetwork:",args.network_file,
@@ -77,14 +71,13 @@ if args.verbose:
     print("alpha:",args.alpha, 
           "\nbeta/K:",args.beta_K,
           "\ndirection:",args.direction,
-          "\nmethod:",args.method,
+          "\nmin_sample_overlap(J):",args.J,
           "\nRRHO significance threshold:",args.p_val,
           "\nmax_n_steps:",args.max_n_steps,
           "\nn_steps_averaged:",args.n_steps_averaged,
           "\nn_steps_for_convergence:",args.n_steps_for_convergence,
           "\nmin_SNR:",args.min_SNR,
           "\nallowed_SNR_decrease:",args.allowed_SNR_decrease,
-          "\nmin_sample_overlap:",args.min_sample_overlap,
           "\n",file = sys.stdout)
     
 #### where to write the results ####
@@ -101,7 +94,7 @@ else:
     [date, hs] = date_h.split()
     basename = "results_"+hs+":"+mins+"_"+date 
 
-suffix  = ".alpha="+str(args.alpha)+",beta_K="+str(args.beta_K)+","+args.method+"_"+args.direction+",p_val="+str(args.p_val)
+suffix  = ".alpha="+str(args.alpha)+",beta_K="+str(args.beta_K)+",direction="+args.direction+",p_val="+str(args.p_val)+",min_SNR="+str(args.min_SNR)
 if args.verbose:
     print("Will save output files to:",args.out_dir,
         "\n\tOutput prefix:", basename,
@@ -114,183 +107,177 @@ exprs, network = prepare_input_data(args.exprs_file, args.network_file, verbose 
 max_log_float = np.log(np.finfo(np.float64).max)
 n_exp_orders = 7 # ~1000 times 
 # define minimal number of patients in a module
-min_n_samples = int(max(10,0.05*len(exprs.columns.values))) # set to max(10, 5% of the cohort) 
+if args.min_n_samples == -1:
+    args.min_n_samples = int(max(10,0.05*len(exprs.columns.values))) # set to max(10, 5% of the cohort) 
+
 if args. verbose:
-    print("Mininal number of samples in a module:",min_n_samples ,file=sys.stdout)
+    print("Mininal number of samples in a module:",args.min_n_samples ,file=sys.stdout)
+
+N = exprs.shape[1]
+p0 = N*np.log(0.5)+np.log(args.beta_K)
+match_score = np.log((args.alpha*0.5+1)/(args.alpha))
+mismatch_score = np.log((args.alpha*0.5+0)/args.alpha)
+bK_1 = math.log(1+args.beta_K)
 
 
-
-### try loading data for initial state
-ini_state_file = args.out_dir+args.basename+suffix+".initial_state.pickle"
-if os.path.exists(ini_state_file):
+########################## RRHO ######################
     
-    from desmond_io import load_object
-    
-    [network, moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs] = load_object(ini_state_file)
-    print("Loaded initial state data from",ini_state_file,file = sys.stdout)
-    N = edge2Patients.shape[1]
-    p0 = N*np.log(0.5)+np.log(args.beta_K)
-    match_score = np.log((args.alpha*0.5+1)/(args.alpha))
-    mismatch_score = np.log((args.alpha*0.5+0)/args.alpha)
-    print("\tgenes:",len(network.nodes()),"\tsamples:",N,
-          "\n\tnon-empty edges:",len(network.edges()),file = sys.stdout)
+# first check if the network already exists and try loading it
+network_with_samples_file =  args.out_dir+basename + ".direction="+args.direction+",p_val="+str(args.p_val)+",minSNR="+ str(args.min_SNR)+",min_ns="+str(args.min_n_samples)+".network.txt"
 
+if os.path.exists(network_with_samples_file):
+    from desmond_io import print_network_stats,load_network
+    network = load_network(network_with_samples_file, verbose = args.verbose)
+    print("Loaded annotated network from",network_with_samples_file,file = sys.stdout)
+    print_network_stats(network)
 else:
-    ########################## RRHO ######################
-    ### perform RRHO for every edge 
-    # first check if the network already exists
-    network_with_samples_file =  args.out_dir+ basename +"."+args.method+"_"+args.direction+",p_val="+str(args.p_val)+".network.txt"
-    if os.path.exists(network_with_samples_file):
-        from desmond_io import print_network_stats,load_network
-        network = load_network(network_with_samples_file, verbose = args.verbose)
-        print("Loaded annotated network from",network_with_samples_file,file = sys.stdout)
-        print_network_stats(network)
-    else:
-        from method import precompute_RRHO_thresholds,  expression_profiles2nodes, assign_patients2edges, mask_empty_edges
-        from desmond_io import save_network
-        ##### assign expression vectors on nodes 
-        network = expression_profiles2nodes(network, exprs, args.direction)
-        
-        if args.method == "RRHO":
-            # define step for RRHO
-            fixed_step = int(max(1,0.01*len(exprs.columns.values))) # 5-10-20 ~15
-            if args. verbose:
-                print("Fixed step for RRHO selected:", fixed_step, file =sys.stdout)
-            rrho_thresholds = precompute_RRHO_thresholds(exprs, fixed_step = fixed_step,significance_thr=args.p_val)
-            
-        ####  assign patients on edges
-        network = assign_patients2edges(network, method= args.method,
-                                        fixed_step=fixed_step, rrho_thrs = rrho_thresholds,
-                                        verbose=args.verbose)
+    from method import precompute_RRHO_thresholds,  expression_profiles2nodes, assign_patients2edges, mask_empty_edges
+    from desmond_io import save_network
+    ##### assign expression vectors on nodes 
+    network = expression_profiles2nodes(network, exprs, args.direction)
 
-        # get rid of empty edges
-        network = mask_empty_edges(network,min_n_samples=min_n_samples,remove=True, verbose=args.verbose)
-        if args.plot_all:
-            from desmond_io import plot_edge2sample_dist
-            plot_outfile=args.out_dir + args.basename +suffix+".n_samples_on_edges.svg"
-            plot_edge2sample_dist(network,plot_outfile)
+    # define step for RRHO
+    fixed_step = int(max(1,0.01*len(exprs.columns.values))) # 5-10-20 ~15
+    if args. verbose:
+        print("Fixed step for RRHO selected:", fixed_step, file =sys.stdout)
+    rrho_thresholds = precompute_RRHO_thresholds(exprs, fixed_step = fixed_step,significance_thr=args.p_val)
 
-        # save the network with patients on edges 
-        save_network(network, network_with_samples_file, verbose = args.verbose)
-        if args.verbose:
-            print("Write network with samples to",network_with_samples_file,file= sys.stdout)
+    ####  assign patients on edges
+    network = assign_patients2edges(network, min_SNR=args.min_SNR,min_n_samples=args.min_n_samples,
+                                       fixed_step=fixed_step, rrho_thrs = rrho_thresholds,verbose=args.verbose)
+
+    # get rid of empty edges
+    network = mask_empty_edges(network,min_n_samples=args.min_n_samples,remove=True, verbose=args.verbose)
+    if args.plot_all:
+        from desmond_io import plot_edge2sample_dist
+        plot_outfile=args.out_dir + args.basename +suffix+".n_samples_on_edges.svg"
+        plot_edge2sample_dist(network,plot_outfile)
+    # get rid of components containing just 1 or 2 nodes 
+
+    # save the network with patients on edges 
+    save_network(network, network_with_samples_file, verbose = args.verbose)
+    if args.verbose:
+        print("Write network with samples to",network_with_samples_file,file= sys.stdout)
 
 ###################################### Step 2. Sample module memberships ######################
 
-    ##### set initial model state #######
-    from method import set_initial_conditions, calc_lp, calc_norm_coef 
-    
-    if args.verbose:
-        print("Compute initial conditions...",file = sys.stdout)           
-    
-    moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs = set_initial_conditions(network,exprs ,verbose = args.verbose)
+##### set initial model state #######
+from method import set_initial_conditions, calc_lp
+from desmond_io import save_object, save_network
 
-    N = edge2Patients.shape[1]
-    p0 = N*np.log(0.5)+np.log(args.beta_K)
-    match_score = np.log((args.alpha*0.5+1)/(args.alpha))
-    mismatch_score = np.log((args.alpha*0.5+0)/args.alpha)
+if args.verbose:
+    print("Compute initial conditions...",file = sys.stdout)           
 
-    ### setting the initial state
-    t_0 = time.time()
-    t_1=t_0
-    for n1,n2,data in network.edges(data=True):
-        m = data['m']
-        e = data['e']
-        data['log_p'] = []
-        data['modules'] = []
-        for n in [n1,n2]:
-            for n3 in network[n].keys():
-                m2 = network[n][n3]['m']
-                if not m2 in data['modules']:
-                    lp = calc_lp(e,m,m2,edge2Patients,nOnesPerPatientInModules,moduleSizes,
-                                 edgeOneFreqs,moduleOneFreqs,alpha=args.alpha,beta_K=args.beta_K, p0=p0)
-                    data['log_p'].append(lp)
-                    data['modules'].append(m2)
-        if args.verbose and e%1000 == 0:
-            print(e,"\tedges processed",round(time.time()- t_1,1) , "s runtime",file=sys.stdout)
-            t_1 = time.time()
-    print("Set initial LPs in",round(time.time()- t_0,1) , "s", file = sys.stdout)
+moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, moduleOneFreqs = set_initial_conditions(network,exprs ,verbose = args.verbose)
 
-    ### save data for initial state
-    save_object([network, moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, edgeOneFreqs, moduleOneFreqs], ini_state_file)
+### setting the initial state
+t_0 = time.time()
+t_1=t_0
+for n1,n2,data in network.edges(data=True):
+    m = data['m']
+    e = data['e']
+    data['log_p'] = []
+    data['modules'] = []
+    for n in [n1,n2]:
+        for n3 in network[n].keys():
+            m2 = network[n][n3]['m']
+            if not m2 in data['modules']:
+                lp = calc_lp(e,m,m2,edge2Patients,nOnesPerPatientInModules,moduleSizes,
+                             moduleOneFreqs,p0, match_score,mismatch_score,
+                             bK_1,log_func=np.log,alpha=args.alpha,beta_K=args.beta_K)
+                data['log_p'].append(lp)
+                data['modules'].append(m2)
+    if args.verbose and e%1000 == 0:
+        print(e,"\tedges processed",round(time.time()- t_1,1) , "s runtime",file=sys.stdout)
+        t_1 = time.time()
+print("time:\tSet initial LPs in",round(time.time()- t_0,1) , "s", file = sys.stdout)
 
-edge2Module_history_file = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".e2m_history.pickle"
+
+'''edge2Module_history_file = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".e2m_history.pickle"
 
 if os.path.exists(edge2Module_history_file) and not args.force:
     [edge2Module_history,n_final_steps,n_skipping_edges,P_diffs] = load_object(edge2Module_history_file)
     print("Loaded precomputed model states from",edge2Module_history_file,file = sys.stdout)
     print("Will build consensus of the last",n_final_steps,"states.",file = sys.stdout)
-else:
-    ### Sampling
-    from method import sampling# check_convergence, check_convergence_conditions, apply_changes
-    edge2Module_history,n_final_steps,n_skipping_edges,P_diffs = sampling(network, edge2Module, edge2Patients, nOnesPerPatientInModules,moduleSizes, edgeOneFreqs, moduleOneFreqs, p0, alpha = args.alpha, beta_K = args.beta_K, max_n_steps=args.max_n_steps, n_steps_averaged = args.n_steps_averaged, n_points_fit = 10, tol = 0.1, n_steps_for_convergence = args.n_steps_for_convergence, verbose=args.verbose)
-    # save full edge2Module history
-    save_object([edge2Module_history,n_final_steps,n_skipping_edges,P_diffs],edge2Module_history_file)
+else:'''
 
+### Sampling
+from method import sampling
+
+edge2Module_history,n_final_steps,n_skipping_edges,P_diffs = sampling(network,exprs, edge2Module, edge2Patients, nOnesPerPatientInModules,moduleSizes,moduleOneFreqs, p0, match_score,mismatch_score, bK_1,log_func=np.log, alpha = args.alpha, beta_K = args.beta_K, max_n_steps=args.max_n_steps, n_steps_averaged = args.n_steps_averaged, n_points_fit = 10, tol = 0.1, n_steps_for_convergence = args.n_steps_for_convergence, edge_ordering = "corr", verbose=args.verbose)
+
+# save full edge2Module history
+#save_object([edge2Module_history,n_final_steps,n_skipping_edges,P_diffs],edge2Module_history_file)
 
 if args.plot_all:
     from desmond_io import plot_convergence
     plot_outfile = args.out_dir + args.basename +suffix+",ns_max=" + str(args.max_n_steps)+ ",ns_avg=" + str(args.n_steps_averaged) + ",ns_c="+str(args.n_steps_for_convergence) + ".convergence.svg"
     plot_convergence(n_skipping_edges, P_diffs,len(edge2Module_history)-n_final_steps,
                      args.n_steps_averaged, outfile=plot_outfile)
+
 ### take the last (n_points_fit+n_steps_for_convergence) steps
 edge2Module_history = edge2Module_history[-n_final_steps:]
 
 ### get consensus edge-to-module membership
-consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, edgeOneFreqs, moduleOneFreqs = get_consensus_modules(edge2Module_history, network, edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes, edgeOneFreqs, moduleOneFreqs, p0, alpha=args.alpha,beta_K=args.beta_K)
+consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, moduleOneFreqs = get_consensus_modules(edge2Module_history, network, edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes, moduleOneFreqs, p0,match_score,mismatch_score, bK_1,log_func=np.log, alpha=args.alpha,beta_K=args.beta_K)
 
 print("Empty modules:", len([x for x in moduleSizes if x == 0]),
-      "\nNon-empty modules:",len([x for x in moduleSizes if x != 0]))
+      "\nNon-empty modules:",len([x for x in moduleSizes if x > 0]))
 
 ################################## 3. Post-processing ####################################################
 ### Make biclusters 
 from method import get_genes, identify_opt_sample_set, bicluster_avg_SNR
-from desmond_io import write_modules
-from method import merge_modules, calc_new_SNR, add_bic, remove_bic
+from desmond_io import write_bic_table
+from method import merge_biclusters
 
-
-bics = []
-for mid in range(0,len(moduleSizes)):
-    if moduleSizes[mid]>2:
-        genes = get_genes(mid,edge2Module,network.edges())
-        samples, thr, avgSNR = identify_opt_sample_set(nOnesPerPatientInModules[mid,],
-                                            exprs, genes, min_n_samples=min_n_samples)
-        bics.append({"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"id":mid})
-
-
-print("Biclusters with > 2 genes:",len(bics), file = sys.stdout)
-
-####  throw out biclusters with low avg. SNR 
+t0 = time.time()
 filtered_bics = []
-for bic in bics:
-    if bic["avgSNR"] > args.min_SNR:
-        filtered_bics.append(bic)
-        
-print("biclusters after SNR filtering:",len(filtered_bics), file=sys.stdout)
+few_genes = 0
+few_samples = 0
+low_SNR = 0
+for mid in range(0,len(moduleSizes)):
+    if moduleSizes[mid]>2: # exclude biclusters with too few genes
+        genes = get_genes(mid,consensus_edge2module,network.edges())
+        bic = identify_opt_sample_set(genes, exprs,
+                                      direction=args.direction,
+                                      min_n_samples=args.min_n_samples)
+        avgSNR = bic["avgSNR"]
+        if avgSNR ==-1:  # exclude biclusters with too few samples
+            few_samples+=1
+        elif avgSNR < args.min_SNR: # exclude biclusters with low avg. SNR 
+            low_SNR += 1
+        else:
+            bic["id"] = mid
+            filtered_bics.append(bic)
+    elif moduleSizes[mid]>0:
+        few_genes += 1 
+print("time:\tIdentified optimal patient sets in %s" % round(time.time()-t0,2))
+
+print("\tBiclusters with not enough genes:",few_genes, file = sys.stdout)
+print("\tBiclusters with not enough samples:",few_samples, file = sys.stdout)      
+print("\tBiclusters with low avg. |SNR|:", low_SNR, file = sys.stdout)
+
+print("\nPassed biclusters with > 2 genes and >= %s samples: %s"%(args.min_n_samples,len(filtered_bics)), file = sys.stdout)
+
+result_file_name = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)
+
+# save raw biclusters
+write_bic_table(filtered_bics, result_file_name+".biclusters.tsv")
 
 #### Merge remaining biclusters 
-resulting_bics = merge_modules(filtered_bics,nOnesPerPatientInModules,moduleSizes,exprs,
-                               min_sample_overlap = args.min_sample_overlap,
-                               min_acceptable_SNR_percent=1-args.allowed_SNR_decrease,
-                               min_n_samples=min_n_samples, verbose= args.verbose)
-print("biclusters after merge:",len(resulting_bics))
+from method import merge_biclusters
 
 
-result_file_name = args.out_dir+args.basename+suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".biclusters"
 
-if args.plot_all:
-    from desmond_io import plot_bic_stats
-    plot_outfile = args.out_dir + args.basename + suffix+",ns_max="+str(args.max_n_steps)+",ns_avg="+str(args.n_steps_averaged)+",ns_c="+str(args.n_steps_for_convergence)+".bicluster_stats.svg"
-    plot_bic_stats(bics,plot_outfile)
+merged_bics = merge_biclusters(filtered_bics, exprs, min_n_samples=args.min_n_samples,
+               direction=args.direction, min_SNR=args.min_SNR, J_threshold=args.J,verbose = args.verbose)
 
-write_modules(resulting_bics, result_file_name+".txt")
+print("Biclusters remaining after merging:", len(merged_bics))
+for bic in merged_bics:
+    bic["n_genes"] = len(bic["genes"])
+    bic["n_samples"] = len(bic["samples"])
+    print("\t".join(map(str,[bic["n_genes"],bic["n_samples"], bic["avgSNR"],bic["direction"]])))
+
+write_bic_table(merged_bics, result_file_name+".merged_J="+str(args.J)+".biclusters.tsv")
+
 print("Total runtime:",round(time.time()-start_time,2),file = sys.stdout)
-
-resulting_bics = pd.DataFrame.from_dict(resulting_bics)
-resulting_bics["n_genes"] = resulting_bics["genes"].apply(len)
-resulting_bics["n_samples"] =  resulting_bics["samples"].apply(len)
-resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(map(str,x)))
-resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(map(str,x)))
-resulting_bics = resulting_bics[["id","avgSNR","n_genes","n_samples","genes","samples"]]
-resulting_bics.sort_values(by=["n_samples","avgSNR","n_genes"],inplace = True, ascending = False)
-resulting_bics.to_csv(result_file_name+".tsv" ,sep = "\t")
