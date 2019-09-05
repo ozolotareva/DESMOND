@@ -164,7 +164,8 @@ def write_bic_table(resulting_bics, results_file_name):
         resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(map(str,x)))
         resulting_bics = resulting_bics[["id","avgSNR","n_genes","n_samples","direction","genes","samples"]]
         resulting_bics.sort_values(by=["avgSNR","n_genes","n_samples"],inplace = True, ascending = False)
-    resulting_bics.to_csv(results_file_name ,sep = "\t")
+        resulting_bics["id"] = range(0,resulting_bics.shape[0])
+    resulting_bics.to_csv(results_file_name ,sep = "\t", index=False)
     
 ### plots numnber of oscilating edges and RMS(Pn-Pn+1)
 def plot_convergence(n_skipping_edges,P_diffs, thr_step,n_steps_averaged, outfile = ""):

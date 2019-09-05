@@ -213,7 +213,8 @@ def mask_empty_edges(network,min_n_samples=10,remove = False, verbose = True):
     return network
 #################################### Gibbs Sampling #######################################################
 
-def calc_lp(edge,self_module,module,edge2Patients,nOnesPerPatientInModules,moduleSizes,
+def calc_lp(edge,self_module,module,edge2Patients,
+            nOnesPerPatientInModules,moduleSizes,
             moduleOneFreqs,p0,match_score,mismatch_score,bK_1,log_func=np.log,
             alpha=1.0,beta_K=1.0):
     
@@ -241,6 +242,7 @@ def calc_lp(edge,self_module,module,edge2Patients,nOnesPerPatientInModules,modul
     
     # if a module contains more than one edge
     beta_term = math.log(m_size+beta_K)
+    
     # alpha_term
     # ones-matching
     oneRatios = (n_ones_per_pat+alpha/2)/(m_size+alpha)
@@ -251,7 +253,9 @@ def calc_lp(edge,self_module,module,edge2Patients,nOnesPerPatientInModules,modul
 
     return ones_matching_term+zeros_matching_term + beta_term
 
-def set_initial_conditions(network,exprs, verbose = True):
+def set_initial_conditions(network,exprs, p0, match_score, mismatch_score, bK_1, N,
+                           log_func=np.log, alpha = 1.0,
+                           beta_K = 1.0,verbose = True):
     t_0 = time.time()
     
     # 1. the number of edges inside each component, initially 1 for each component
@@ -285,7 +289,6 @@ def set_initial_conditions(network,exprs, verbose = True):
         data['m'] = i
         data['e'] = i
         i+=1
-    
     #4.
     edge2Module = range(0,len(network.edges()))
     
@@ -295,8 +298,32 @@ def set_initial_conditions(network,exprs, verbose = True):
     for e in range(0,n):
         moduleOneFreqs.append(float(sum(edge2Patients[e,]))/edge2Patients.shape[1])
     
-    print("Initial state created in",round(time.time()- t_0,1) , "s runtime", file = sys.stdout)
-    return moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, moduleOneFreqs
+    #6. setting initial LPs
+    t_0 = time.time()
+    t_1=t_0
+    for n1,n2,data in network.edges(data=True):
+        m = data['m']
+        e = data['e']
+        data['log_p'] = []
+        data['modules'] = []
+        for n in [n1,n2]:
+            for n3 in network[n].keys():
+                m2 = network[n][n3]['m']
+                if not m2 in data['modules']:
+                    lp = calc_lp(e,m,m2,edge2Patients,
+                                 nOnesPerPatientInModules,moduleSizes,
+                                 moduleOneFreqs,p0, match_score,mismatch_score,
+                                 bK_1,log_func=np.log,
+                                 alpha=alpha,beta_K=beta_K)
+                    data['log_p'].append(lp)
+                    data['modules'].append(m2)
+        if verbose and e%1000 == 0:
+            print(e,"\tedges processed",round(time.time()- t_1,1) , "s runtime",file=sys.stdout)
+            t_1 = time.time()
+    print("\tSet initial LPs in",round(time.time()- t_0,1) , "s", file = sys.stdout)
+    
+    print("time: Initial state created in",round(time.time()- t_0,1) , "s runtime", file = sys.stdout)
+    return moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, moduleOneFreqs, network
 
 def adjust_lp(log_probs,n_exp_orders=7):
     # adjusting the log values before normalization to avoid under-flow
@@ -415,7 +442,8 @@ def sampling(network, exprs,edge2Module, edge2Patients,nOnesPerPatientInModules,
     is_converged = False
     network_edges = network.edges(data=True)
     for step in range(1,max_n_steps):
-        print("step",step)
+        if verbose:
+            print("step",step,file = sys.stdout)
         not_changed_edges = 0
         t_0 = time.time()
         t_1=t_0
@@ -441,12 +469,16 @@ def sampling(network, exprs,edge2Module, edge2Patients,nOnesPerPatientInModules,
                 not_changed_edges +=1#
             i+=1
             if i%10000 == 1:
-                print(i,"edges processed","\t",1.0*not_changed_edges/len(network.edges()),"%edges not changed;",
-                      round(time.time()- t_1,1) , "s runtime",file=sys.stdout)
+                if verbose:
+                    print(i,"edges processed", "\t",
+                          1.0*not_changed_edges/len(edge_order),
+                          "%edges not changed;",
+                          round(time.time()- t_1,1) , "s runtime",file=sys.stdout)
                 not_changed_edges=0
                 t_1 = time.time()
-        print("\tstep",step,1.0*not_changed_edges/len(network.edges()),"- % edges not changed;",
-              "runtime",round(time.time()- t_0,1) , "s", file = sys.stdout)
+        if verbose:
+            print("\tstep",step,1.0*not_changed_edges/len(edge_order), 
+                  "- % edges not changed; runtime",round(time.time()- t_0,1) , "s", file = sys.stdout)
         edge2Module_history.append(copy.copy(edge2Module))
         #n_edge_skip_history.append(len(network.edges())-not_changed_edges)
         if step == n_steps_averaged:
@@ -656,86 +688,107 @@ def identify_opt_sample_set(genes, exprs,direction="UP",min_n_samples=8):
         else: ndx = ndx1
     samples = e.columns[ndx]
     avgSNR = bicluster_avg_SNR(exprs,genes=genes,samples=samples)
-    if len(samples)>N*0.5: # invert biclusters spanning more than 50% of patients 
-        if direction == "UP": 
-            bic_direction = "DOWN"
-        else: 
-            bic_direction = "UP"
-        samples = set(e.columns).difference(samples)
+
+    if len(samples)<N*0.5*1.1 and len(samples)>=min_n_samples: # allow bicluster to be a little bit bigger
+        bic = {"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"direction":direction}
+        return bic
     else:
-        bic_direction = direction
-    bic = {"genes":set(genes), "samples":set(samples), "avgSNR":avgSNR,"direction":bic_direction}
-    return bic
+        return {"avgSNR":-1}
 
 
 #### Merging  ### 
-def merge_biclusters(biclusters, exprs, min_n_samples=8,verbose = True,direction="UP", min_SNR=0.5,
-               max_SNR_decrease=0.1, J_threshold=0.5):
+def find_dfmax(df,maxJ=0.75):
+    df = df.dropna(how="all",axis=1)
+    df.dropna(how="all",inplace=True,axis=0)
+    rowmax = df.idxmax(skipna=True,axis=1)
+    maxi, maxj, maxJ = None,None,maxJ
+    for i in rowmax.index.values:
+        j = rowmax[i]
+        J = df.loc[i,j]
+
+        if J>maxJ:
+            maxJ = J
+            maxi, maxj = i,j
+    return maxi, maxj, maxJ
+
+def calc_J(bic,bic2,all_samples):
+    s1 = bic["samples"]
+    s2 = bic2["samples"]
+    if bic["direction"] != bic2["direction"]:
+        s2 = all_samples.difference(s2)
+    sh_samples = s1.intersection(s2)
+    u_samples = s1.union(s2)
+    J=1.0*len(sh_samples)/len(u_samples)
+    return J
+
+def merge_biclusters(biclusters, exprs, min_n_samples=8,
+                     verbose = True,direction="UP", min_SNR=0.5,
+                     max_SNR_decrease=0.1, J_threshold=0.5):
     t0 = time.time()
     bics = dict(zip([x["id"] for x in biclusters],biclusters))
-    merged_bics = []
+
     N = exprs.shape[1]
-    for bic_id in bics.keys():
-        if bic_id in bics.keys():
-            candidate_ids = []
-            n_merges = 0
-            bic = bics[bic_id]
-            if verbose:
-                print("Candidates for merging with bicluster %s: %sx%s, avg.SNR=%s :" % (bic["id"],len(bic["genes"]),len(bic["samples"]),round(bic["avgSNR"],2)))
-            for bic2_id in bics.keys():
-                if bic_id!= bic2_id:
-                    bic2 = bics[bic2_id]
-                    sh_samples = bic["samples"].intersection(bic2["samples"])
-                    u_samples = bic["samples"].union(bic2["samples"])
-                    J = (1.0*len(sh_samples))/len(u_samples)
-                    if J>J_threshold:
-                        candidate_ids.append(bic2_id)
+    all_samples = set(exprs.columns.values)
+    candidates = {}
+    n_merges = 0
+    
+    for i in bics.keys():
+        bic = bics[i]
+        for j in bics.keys():
+            if i != j :
+                bic2 = bics[j]
+                J = calc_J(bic,bic2,all_samples)       
+                if J>J_threshold:
+                    candidates[(i,j)] = J
+                
+           
+    nothing_to_merge = False
+    
+    while not nothing_to_merge and len(candidates.values())>0:       
+        # take max J pair
+        max_J = max(candidates.values())
+        if max_J<J_threshold:
+            nothing_to_merge = True
+        else:
+            maxi, maxj = candidates.keys()[candidates.values().index(max_J)]
+            print("\t\ttry",bics[maxi]["id"],"+",bics[maxj]["id"],
+                  bics[maxi]["direction"],"+",bics[maxj]["direction"])
+            # try creating a new bicsluter from bic and bic2
+            genes = bics[maxi]["genes"] | bics[maxj]["genes"] 
+            new_bic = identify_opt_sample_set(genes, exprs,
+                                              direction=direction,
+                                              min_n_samples=min_n_samples)
 
-
-            no_merge = False
-            while len(candidate_ids)>0 and not no_merge:
-                bm_id, best_new_bic, best_avgSNR = False, False, min_SNR
-                no_merge = True
-                for bic2_id in candidate_ids:
-                    bic2 = bics[bic2_id]
-                    # try creating a new bicsluter from bic and bic2
-                    genes = bic2["genes"] | bic["genes"] 
-                    new_bic = identify_opt_sample_set(genes, exprs,
-                                                      direction=direction,
-                                                      min_n_samples=min_n_samples)
-                    avgSNR = new_bic["avgSNR"]
-                    if avgSNR >= best_avgSNR:
-                        best_avgSNR = avgSNR
-                        bm_id = bic2_id
-                        best_new_bic = new_bic
-                        best_new_bic["n_genes"] = len(best_new_bic["genes"])
-                        best_new_bic["n_samples"] = len(best_new_bic["samples"])
-
-                if bm_id:
-                    n_merges +=1
-                    no_merge =  False
-
-                    if verbose:
-                        substitution = (bic_id, len(bic["genes"]),len(bic["samples"]),
-                                        bm_id, len(bics[bm_id]["genes"]),len(bics[bm_id]["samples"]),
-                                        round(best_new_bic["avgSNR"],2),best_new_bic["n_genes"],
-                                        best_new_bic["n_samples"])
-                        print("\tMerge biclusters %s:%sx%s and %s:%sx%s --> %s SNR and %sx%s"%substitution)
-                    best_new_bic["id"] = bic_id
-                    bic = best_new_bic
-                    # delete bic2 
-                    # from candidates
-                    candidate_ids.remove(bm_id)
-                    # from biclusters 
-                    del bics[bm_id]
-
-            merged_bics.append(bic)
-
-            if verbose:
-                print("%s biclusters joined to bicluster %s." % (n_merges,bic_id))
-                print("Resulting bicluster %sx%s SNR=%s." % (len(bic["genes"]),len(bic["samples"]),
-                                                            (round(bic["avgSNR"],2))))
+            avgSNR = new_bic["avgSNR"]
+            if avgSNR >= min_SNR:
+                # place new_bic to ith bic
+                new_bic["id"] = bics[maxi]["id"]
+                substitution = (bics[maxi]["id"], len(bics[maxi]["genes"]),len(bics[maxi]["samples"]),
+                                    bics[maxi]["avgSNR"],bics[maxi]["direction"],
+                                    bics[maxj]["id"], len(bics[maxj]["genes"]), 
+                                    len(bics[maxj]["samples"]),
+                                    bics[maxj]["avgSNR"],bics[maxj]["direction"],
+                                    round(new_bic["avgSNR"],2),len(new_bic["genes"]),
+                                    len(new_bic["samples"]))
+                print("\tMerge biclusters %s:%sx%s (%s,%s) and %s:%sx%s  (%s,%s) --> %s SNR and %sx%s"%substitution)
+                bics[maxi] = new_bic
+                # deleted J data for ith and jth biclusters
+                for i,j in candidates.keys():
+                    if maxi in (i,j) or maxj in (i,j):
+                        del candidates[(i,j)]
+                # remove j-th bics jth column and index
+                del bics[maxj]
+                for j in bics.keys():
+                    if j!=maxi:
+                        J = calc_J(new_bic,bics[j],all_samples)
+                        if J>J_threshold:
+                            candidates[(maxi,j)] = J
+            else:
+                # set J for this pair to 0
+                print("\t\tSNR=",avgSNR,"set J=",max_J,"-->0")
+                candidates[(maxi,maxj)] = 0
+     
     if verbose:
         print("time:\tMerging finished in:",round(time.time()-t0,2))
-    return merged_bics
-
+     
+    return bics.values()
