@@ -21,8 +21,7 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
 
 ```
 python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
---alpha 0.5 --beta_K 1.0 --p_val 0.005 --min_SNR 0.5 \
---verbose --plot_all
+--alpha 1.0 --p_val 0.0005 --min_SNR 0.75  --direction [UP|DOWN]
 
 ```
 ### Output
