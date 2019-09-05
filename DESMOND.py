@@ -51,9 +51,6 @@ parser.add_argument('--plot_all', dest='plot_all', action='store_true', help='Sw
 ### if verbose 
 parser.add_argument('--verbose', dest='verbose', action='store_true', help='', required=False)
 
-### whether rewrite temporary files
-parser.add_argument('--force', dest='force', action='store_true', help='', default=False, required=False)
-
 ########################## Step 1. Read and check inputs ###############################################
 start_time = time.time()
 
