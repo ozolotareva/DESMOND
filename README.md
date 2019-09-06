@@ -25,6 +25,6 @@ python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out
 
 ```
 ### Output
- * \*.biclusters.txt - list of identified biclusters
+ * \*.biclusters.tsv - list of identified biclusters
  * \*.convergence.svg - model convergence plot 
- * \*.initial_state.pickle, \*.network.txt, \*.e2m_history.pickle - temporary files
+ * \*.network.txt  - temporary network file, contains the network with samples assigned on edges. This file is used for restarts with the same network and parameters 'direction', 'p_val', 'min_SNR' and 'min_n_samples'.
