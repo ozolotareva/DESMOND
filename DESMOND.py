@@ -166,10 +166,9 @@ if args.verbose:
 
 ##### seting initial model state #######
 
-n_runs = 1
 
 all_discovered_bics = []
-for run in range(0,n_runs):
+for run in range(0,args.n_runs):
     
     ### Set initial model state ###
     network = load_network(network_with_samples_file, verbose = args.verbose)
@@ -258,7 +257,7 @@ for bic in all_discovered_bics:
     bic["id"] = i
     i+=1
 
-if n_runs > 1:    
+if args.n_runs > 1:    
     print("Biclusters in all runs before final merging:",len(all_discovered_bics))
     merged_bics = merge_biclusters(all_discovered_bics, exprs,
                                        min_n_samples=args.min_n_samples,
