@@ -7,9 +7,11 @@ import sys,os
 import random
 import copy
 import time
+import warnings
+from fisher import pvalue
 
-sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
-from method import print_network_stats
+
+from desmond_io import print_network_stats
 
 def make_bg_matrix(n_genes,n_pats):
     # generates empty matrix of (n_genes,n_pats)
@@ -159,10 +161,11 @@ def group_genes(anno,verbose = True):
         print("\tUnique gene groups",len(gene_groups))
     return gene_groups, max_bics_per_gene, anno 
 
-def find_starting_points(G,bics,m=3,verbose = True):
-    # identifies bics already assigned to G 
-    # ignores biclusters not yet assigned to G
-    # m is multiplicator for selecting nodes with degree m time s higher than the number of biclusters
+def find_starting_points(G,bics,m=1,verbose = True):
+    ''' identifies bics already assigned to G 
+    \n\t m is multiplicator for selecting nodes with degree m times higher than the number of biclusters
+    \n returns 1) a list of starting nodes  2) whether these nodes unlabelled'''
+    
     min_n_neigh = len(bics)
     consider_bics = set()
     for n,data in G.nodes(data=True):
@@ -172,13 +175,13 @@ def find_starting_points(G,bics,m=3,verbose = True):
     # identify seeds - nodes which neighbours already assigned to a bicluster
     if len(consider_bics) == 0:
         # if nothing to consider, add all empty nodes to starting points 
-        starting_nodes = [node for node in G.nodes() if (len(G.node[node]['bics']) == 0 and len(G[node].keys()) >= min_n_neigh*m)]
+        starting_nodes = [node for node in G.nodes() if (len(G.node[node]['bics']) == 0 and unassigned_order(node, G) > min_n_neigh*m)]
         if verbose:
-            print("Will consider no biclusters; de novo strating nodes identified",len(starting_nodes))
-        return starting_nodes
+            print("\twill consider no biclusters; de novo strating nodes identified",len(starting_nodes))
+        return starting_nodes, True
     else:
         if verbose:
-            print("Will consider biclusters",consider_bics,"previously added to the Graph")
+            print("\twill consider biclusters",consider_bics,"previously added to the Graph")
         consider_bics = list(consider_bics)
         starting_nodes = []
         for n in G.nodes():
@@ -196,97 +199,199 @@ def find_starting_points(G,bics,m=3,verbose = True):
         if len(starting_nodes) == 0:
             if verbose:
                 print("Fails to identify any valid starting node. Try increasing m.", file = sys.stderr)
-            return []
+            return [], False
         else:
             if verbose:
                 print("Valid strating nodes identified",len(starting_nodes)) 
-            return starting_nodes
-        
-def assign_nodes(G,genes, bics, verbose = True):
+            return starting_nodes, False
+
+def unassigned_order(node, G):
+    '''Counts the number of unlabelled neighbours for a node in G'''
+    order = 0 
+    for node2 in G[node].keys(): 
+        if len(G.node[node2]['bics']) == 0:
+            order +=1
+    return order 
+
+def DIAMOnD(n, G, CC, requred_len):
+    '''Implements the method from https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1004120'''
+    if len(CC)< requred_len:
+        p_vals=[]
+        s0 = len(CC)
+        N = 2000
+        best_pval,best_candidate = 1.0,-1
+        for n_ in CC:
+            for n2 in G[n_].keys():
+                if len(G.node[n2]['bics']) == 0 and not n2 in CC:
+                    n2_neigh = G[n2].keys()
+                    ks =  len([x for x in n2_neigh if x in CC])# how many neighbours in CC
+                    k_bg =  len(n2_neigh) - ks
+                    p_val = pvalue(ks,k_bg,s0,N).right_tail
+                    if p_val < best_pval:
+                        best_pval = p_val
+                        best_candidate = n2
+        CC.append(best_candidate)
+        if len(CC)< requred_len:
+            CC=DIAMOnD(n, G, CC, requred_len)
+    return CC
+
+def DFS(n, G, CC, requred_len):
+    '''Depth-first search'''
+    for n2 in G[n].keys():
+        if len(G.node[n2]['bics']) == 0 and not n2 in CC:
+            if len(CC) < requred_len:
+                CC.append(n2)
+                CC = DFS(n2, G, CC, requred_len)
+            else:
+                return CC
+    return CC
+
+def BFS(n, G, CC, requred_len):
+    '''Breadth-first search'''
+    neighbours = []
+    for n2 in G[n].keys():
+        if len(G.node[n2]['bics']) == 0 and not n2 in CC:
+            if len(CC) < requred_len:
+                neighbours.append(n2)
+                CC.append(n2)
+            else:
+                return CC
+    for n2 in neighbours:
+        if len(CC) < requred_len:
+            CC = DFS(n2, G, CC, requred_len)
+        else:
+            return CC
+    return CC
+
+def assign_nodes(G,genes, bics,method="DFS", verbose = True):
+    '''Assigns genes to G network nodes given gene-bicluster membership.
+    Takes into account bicsluters which already mapped to the network. '''
     min_n_neigh = len(bics)
     mapped_genes = {}
+    already_mapped = []
+    if method == "DFS":
+        func = DFS
+    elif method == "BFS":
+        func = BFS
+    elif method == "DIAMOnD":
+        func = DIAMOnD
+    else:
+        print("Wrong method name", method,file= sys.stderr)
+        return None, {}
     
-    starting_nodes =  find_starting_points(G,bics,m=3,verbose = verbose)
-
-    G_ = G.copy() # not the same as !copy.copy(G)
+    # identifies seed nodes - which already assigned to a bicluster or pic a random unlabelled nodes
+    starting_nodes, are_new = find_starting_points(G,bics,m=1,verbose = verbose)
+    G_ = G.copy() 
     genes_ = copy.copy(genes)
     
-    while len(starting_nodes)>0 and len(genes_)>0:
-        # perform RW over G nodes until no unmapped genes remain or 
-        # pick a random node with at least len(bics) neighbours
-        g = genes_.pop()
-        n = random.choice(starting_nodes)
-        # add {node:gene} to the mapper
-        mapped_genes[n] = g
-        # update bics
-        G_.node[n]['bics'] = bics
-        # update adjacent nodes - all unassgned neigbours of mapped nodes
-        adj_nodes = set()
-        for n2 in mapped_genes.keys():
-            adj_nodes.update([node for node in G_[n2].keys() if (len(G_.node[node]['bics']) == 0 and len(G_[node].keys()) >= min_n_neigh)])
-        starting_nodes = list(adj_nodes)
-    if len(genes_) == 0:
-        return G_, mapped_genes
-    else:
-        return None
+    requred_len = len(genes_)
     
-    
-def grow_subnetworks(G,gene_groups,max_bics_per_gene, n_trials= 10, verbose=True):
-    nx.set_node_attributes(G,'bics',[])
+    random.shuffle(starting_nodes)
+    #if not are_new: # 
+    if verbose:
+        print("\tGrow CC", bics, "from any of",len(starting_nodes),"nodes for", len(genes_),"genes.")
+    for starting_node in starting_nodes:
+        if are_new: # if new CC initialized, map starting node to a gene
+            CC = [starting_node]
+        else:
+            CC = []
+        requred_len = len(genes_)
+        CC = func(starting_node, G_, CC, requred_len)
+        # map genes
+        for n in CC:
+            g = genes_.pop()
+            mapped_genes[n] = g
+            G_.node[n]['bics'] = bics
+        if len(genes_) == 0:
+            return G_, mapped_genes
+        else:
+            if verbose:
+                print("\t\tgenes remaining unassigned",len(genes_))
+    print("\tFailed trial",trial,"for CC of",len(CC), "genes",len(genes_),file=sys.stderr )
+    return None, {}
+  
+
+def grow_independent_subnetworks(G,gene_groups,max_bics_per_gene, method="DFS", verbose=True):
     mapping= {}
-    all_genes = []
-    for s in range(max_bics_per_gene,0,-1):
+    for gene_group in gene_groups:
+        bics = gene_group['bics']
+        if len(bics) == 1:
+            genes = copy.copy(gene_group['genes'])
+            if verbose:
+                print("Assing nodes for",len(genes),"gene(s) from", bics,"using", method)
+            G, mapped_genes  = assign_nodes(G,genes, bics, method=method,verbose = verbose)
+            if len(mapped_genes.keys())>0:
+                mapping.update(mapped_genes)
+            else:
+                if verbose:
+                    print("Failed mapping for ",len(genes),"gene(s) from", bics, file = sys.stderr)
+                return None, {}
+    return G, mapping
+    
+
+def add_shared_nodes(G,gene_groups,max_bics_per_gene, mapping, verbose=True):
+    # add shared nodes, starting from nodes assigned to many bicslucters
+    for s in range(max_bics_per_gene,1,-1):
         for gene_group in gene_groups:
             bics = gene_group['bics']
             genes = copy.copy(gene_group['genes'])
-            all_genes+=genes
             if len(bics) == s:
                 if verbose:
                     print("Assing nodes for",len(genes),"gene(s) from", bics)
-                n_trial = 1
-                passed = False
-                while n_trial < n_trials and not passed:
-                    try:
-                        G_, mapped_genes  = assign_nodes(G,genes, bics,verbose = verbose)
-                        passed = True
-                        if n_trial >1 and verbose:
-                            print("%s attempt successfull"%n_trial)
-                    except:
-                        # try again ...
-                        if verbose:
-                            print("tries again for",len(genes),"gene(s) from bicluster(s)",bics)
-                        n_trial +=1
-                if passed:
-                    # update mapping and G
-                    mapping.update(mapped_genes)
-                    G = G_
+                starting_nodes, are_new = find_starting_points(G,bics,m=1,verbose = verbose)
+                n_genes = len(genes)
+                if len(starting_nodes) >= n_genes:
+                    nodes = random.sample(starting_nodes,n_genes)
+                    for i in range(0,n_genes): # not necessarily directly connected
+                        # update mapping and G
+                        mapping[nodes[i]]=genes[i]
+                        G.node[nodes[i]]['bics'] = bics
+                    print("Success for",len(genes),"gene(s) from", bics)
                 else:
-                    if verbose:
-                        print("Failed for ",len(genes),"gene(s) from", bics,"Try again and increase n_trials.", file = sys.stderr)
-                    return None
+                    print("Failed for ",len(genes),"gene(s) from", bics,".No free candidate nodes connecting subnetworks available.", file = sys.stderr)
+                    return False, None
+    
+    assigned_nodes = [node for node in G.nodes() if len(G.node[node]['bics']) != 0]
+    print("All genes from biclusters mapped:", set(assigned_nodes)== set( mapping.keys()))
     # add background genes:
     unassigned_nodes = [node for node in G.nodes() if len(G.node[node]['bics']) == 0]
+    
     if verbose:
-        print("Background nodes",len(unassigned_nodes), file = sys.stderr)
+        print("Background nodes",len(unassigned_nodes))
     for gene_group in gene_groups:
         bics = gene_group['bics']
         genes = gene_group['genes']
         if len(bics) == 0:
-            mapped_genes = dict(zip(unassigned_nodes,genes))
-            break
-
-    mapping.update(mapped_genes)
+            unassigned_genes = genes
+            print("Unmapped genes:", len(unassigned_genes))
+    mapping.update(dict(zip(unassigned_nodes,unassigned_genes)))
     if verbose:
         print("All nodes mapped:",set(mapping.keys())==set(G.nodes()), file = sys.stderr)
-        print("All genes mapped:",set(mapping.values())==set(all_genes), file = sys.stderr)
     # relabel nodes
-    G2 = nx.relabel_nodes(G,mapping=mapping)
-    if verbose:
-        print("All nodes named as sequence 0..(n_genes-1):",G2.nodes() == range(0,len(G2.nodes())), file = sys.stderr)
-    return G2
+    G = nx.relabel_nodes(G,mapping=mapping)
+    
+    return True, G
+
+def mapp_all_nodes(G,gene_groups,max_bics_per_gene,  method="DFS", verbose=True):
+    G_ = G.copy()
+    nx.set_node_attributes(G_,'bics',[])
+    nx.set_node_attributes(G_,'gene',[])
+    # first create independent networks
+    print("Grow independent networks ")
+    G_, mapping = grow_independent_subnetworks(G_,gene_groups,max_bics_per_gene, method=method, verbose=verbose)
+    if len(mapping)>0:
+        print("\tAdd shared genes")
+        # then select nodes connecting independent subnetworks and label with shared genes
+        passed, G_ = add_shared_nodes(G_,gene_groups,max_bics_per_gene,mapping, verbose=verbose)
+        if passed:
+            return G_
+        else:
+            print("\t...failed assigning shared genes")
+    else:
+        print("\t...failed growing independent subnetworks")
 
 
-def check_connectivity(G, anno,verbose = True):
+def check_connectivity(G, anno,verbose = True, plot = False):
     # checks whether genes from bicluster form a connected component
     all_connected = True
     for bc in range(0,anno.shape[1]):
@@ -295,8 +400,15 @@ def check_connectivity(G, anno,verbose = True):
             if bc in data['bics']:
                 nodes_in_bic.append(n)
         subnet = G.subgraph(nodes_in_bic)
-        if len([nx.connected_components(G)])>1:
+        if len([x for x in nx.connected_components(subnet)])>1:
             all_connected = False
+            print("Subnetwork",bc, "is not connected.", file = sys.stderr)
+        if plot:
+            pos = nx.spring_layout(subnet , iterations=1000)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                nx.draw(subnet ,pos=pos, with_labels=True, font_weight='bold')
+                plt.show()
         if verbose:
             print_network_stats(subnet)
     return all_connected
