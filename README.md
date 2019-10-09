@@ -21,10 +21,10 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
 
 ```
 python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
---alpha 1.0 --p_val 0.0005 --min_SNR 0.75  --direction [UP|DOWN]
+--alpha 0.5 --p_val 0.01 --q 0.5  --direction [UP|DOWN] --verbose --save-gc >LOG 2>ERR;
 
 ```
 ### Output
- * \*.biclusters.tsv - list of identified biclusters
- * \*.convergence.svg - model convergence plot 
+ * \*.biclusters.tsv - list of identified biclusters.
  * \*.network.txt  - temporary network file, contains the network with samples assigned on edges. This file is used for restarts with the same network and parameters 'direction', 'p_val', 'min_SNR' and 'min_n_samples'.
+ * \*.gene_clusters.txt - gene clusters resulting in sampling phase.
