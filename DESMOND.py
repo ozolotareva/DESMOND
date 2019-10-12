@@ -98,9 +98,9 @@ if args.verbose:
 exprs, network = prepare_input_data(args.exprs_file, args.network_file, verbose = args.verbose)
 
 if args.min_n_samples==0:
-    args.min_n_samples = max(10,int(0.1*exprs.shape[0]))
-    if args.verbose:
-        print("\nmax_n_steps:",args.min_n_samples,file = sys.stdout) 
+    args.min_n_samples = max(10,int(0.1*exprs.shape[1]))
+    if args. verbose:
+        print("Mininal number of samples in a module:",args.min_n_samples ,file=sys.stdout)
 
 #### change gene and sample names to ints 
 g_names2ints  = dict(zip(exprs.index.values, range(0,exprs.shape[0])))
@@ -157,9 +157,6 @@ else:
     # define minimal number of patients in a module
     if args.min_n_samples == -1:
         args.min_n_samples = int(max(10,0.05*len(exprs.columns.values))) # set to max(10, 5% of the cohort) 
-
-    if args. verbose:
-        print("Mininal number of samples in a module:",args.min_n_samples ,file=sys.stdout)
 
     N = exprs.shape[1]
     p0 = N*np.log(0.5)+np.log(args.beta_K)
