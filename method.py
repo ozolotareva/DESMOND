@@ -721,9 +721,20 @@ def calc_J(bic,bic2,all_samples):
     J=1.0*len(sh_samples)/len(u_samples)
     return J
 
+def calc_overlap_pval(bic,bic2,all_samples):
+    s1 = bic["samples"]
+    s2 = bic2["samples"]
+    if bic["direction"] != bic2["direction"]:
+        s2 = all_samples.difference(s2)
+    s1_s2 = len(s1.intersection(s2))
+    s1_only = len(s1.difference(s2))
+    s2_only = len(s2.difference(s1))
+    p_val = pvalue(s1_s2,s1_only,s2_only,len(all_samples)-s1_s2-s1_only-s2_only).right_tail
+    return p_val
+
 def merge_biclusters(biclusters, exprs, min_n_samples=8,
                      verbose = True,direction="UP", min_SNR=0.5,
-                     max_SNR_decrease=0.1, J_threshold=0.5):
+                     max_SNR_decrease=0.1, J_threshold=0.5,pval_threshold=0.05):
     t0 = time.time()
     bics = dict(zip([x["id"] for x in biclusters],biclusters))
 
@@ -737,8 +748,9 @@ def merge_biclusters(biclusters, exprs, min_n_samples=8,
         for j in bics.keys():
             if i != j :
                 bic2 = bics[j]
-                J = calc_J(bic,bic2,all_samples)       
-                if J>J_threshold:
+                J = calc_J(bic,bic2,all_samples) 
+                p_val = calc_overlap_pval(bic,bic2,all_samples)
+                if J>J_threshold and p_val<pval_threshold:
                     candidates[(i,j)] = J
                 
            
@@ -781,7 +793,8 @@ def merge_biclusters(biclusters, exprs, min_n_samples=8,
                 for j in bics.keys():
                     if j!=maxi:
                         J = calc_J(new_bic,bics[j],all_samples)
-                        if J>J_threshold:
+                        p_val = calc_overlap_pval(new_bic,bics[j],all_samples)
+                        if J>J_threshold and p_val<pval_threshold:
                             candidates[(maxi,j)] = J
             else:
                 # set J for this pair to 0

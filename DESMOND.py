@@ -16,7 +16,7 @@ import argparse
 import pickle
 import math
 
-sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
+#sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
 
 from desmond_io import prepare_input_data, load_network, print_network_stats
 from method import get_consensus_modules,identify_opt_sample_set
