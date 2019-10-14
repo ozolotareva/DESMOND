@@ -37,7 +37,7 @@ parser.add_argument('--p_val', dest='p_val', type=float, help='Significance thre
 parser.add_argument('--max_n_steps', dest='max_n_steps', type=int, help='Maximal number of steps.', default=200, required=False)
 parser.add_argument('--n_steps_averaged', dest='n_steps_averaged', type=int, help='Number of last steps analyzed when checking convergence condition. Values less than 10 are not recommended.', default=20, required=False)
 parser.add_argument('--n_steps_for_convergence', dest='n_steps_for_convergence', type=int, help='Required number of steps when convergence conditions is satisfied.', default=5, required=False)
-parser.add_argument('--min_n_samples', dest='min_n_samples', type=int, help='Minimal number of samples on edge. If not specified, set to max(10,0.1*cohort_size).', default=0, required=False)
+parser.add_argument('-ns','--min_n_samples', dest='min_n_samples', type=int, help='Minimal number of samples on edge. If not specified, set to max(10,0.1*cohort_size).', default=0, required=False)
 ### merging and filtering parameters
 parser.add_argument('-q','--SNR_quantile', dest='q', type=float, help='Quantile determining minimal SNR threshold.', default=0.1, required=False)
 ### save or load precomputed  gene clusters
@@ -113,29 +113,13 @@ network=nx.relabel_nodes(network,g_names2ints)
 #print_network_stats(network)
 
 
-from sklearn.cluster import KMeans
-
-avgSNR = []
-t0 = time.time()
-edges = network.edges()
-lens = []
-for i in range(0, 1000):
-    g1,g2 = random.choice(edges)
-    e = exprs.loc[[g1,g2],:]
-    labels = KMeans(n_clusters=2, random_state=0,n_init=1,max_iter=100).fit(e.T).labels_
-    ndx0 = np.where(labels == 0)[0]
-    ndx1 = np.where(labels == 1)[0]
-    if min(len(ndx1),len(ndx0))< args.min_n_samples:
-        avgSNR.append(0)
-    e1 = e.iloc[:,ndx1]
-    e0 = e.iloc[:,ndx0]
-    SNR0 = np.mean(e0.mean(axis=1)-e1.mean(axis=1)/(e0.std(axis=1)+e1.std(axis=1)))
-    if np.isnan(SNR0):
-        SNR0 = 0 
-    avgSNR.append(abs(SNR0))
-
-min_SNR = np.quantile(avgSNR,q=1-args.q)
+# read SNR threshold from a file or calculate a new one and save
+from method import define_SNR_threshold
+snr_file=args.out_dir+args.basename + ".p_val="+str(args.p_val)+",q="+str(args.q)+".SNR_threshold.txt"
+min_SNR = define_SNR_threshold(snr_file, exprs,network, args.q, 
+                               min_n_samples=args.min_n_samples)
 print("avg.SNR threshold:",min_SNR)
+    
 
 
 ### if load_gc is on try loading gene clusters

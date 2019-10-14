@@ -20,6 +20,39 @@ import matplotlib
 import matplotlib.pyplot as plt 
 
 ###################################################### RRHO ####################################################################
+def define_SNR_threshold(snr_file, exprs,network, q, min_n_samples=5, random_sample_size= 1000):
+    from sklearn.cluster import KMeans
+
+    if not os.path.exists(snr_file):
+    
+        avgSNR = []
+        t0 = time.time()
+        edges = network.edges()
+        lens = []
+        for i in range(0, random_sample_size):
+            g1,g2 = random.choice(edges)
+            e = exprs.loc[[g1,g2],:]
+            labels = KMeans(n_clusters=2, random_state=0,n_init=1,max_iter=100).fit(e.T).labels_
+            ndx0 = np.where(labels == 0)[0]
+            ndx1 = np.where(labels == 1)[0]
+            if min(len(ndx1),len(ndx0))< min_n_samples:
+                avgSNR.append(0)
+            e1 = e.iloc[:,ndx1]
+            e0 = e.iloc[:,ndx0]
+            SNR0 = np.mean(e0.mean(axis=1)-e1.mean(axis=1)/(e0.std(axis=1)+e1.std(axis=1)))
+            if np.isnan(SNR0):
+                SNR0 = 0 
+            avgSNR.append(abs(SNR0))
+
+        min_SNR = np.quantile(avgSNR,q=1-q)
+        f = open(snr_file,"w")
+        print(min_SNR,file=f)
+    else:
+        f = open(snr_file,"r")
+        min_SNR = float(f.readlines()[0])
+    f.close()
+    return (min_SNR)
+
 
 #### Precompute a matrix of thresholds for RRHO ####
 def find_threshold(t_u,t_w,N, significance_thr):
@@ -738,7 +771,7 @@ def merge_biclusters(biclusters, exprs, min_n_samples=8,
     t0 = time.time()
     bics = dict(zip([x["id"] for x in biclusters],biclusters))
 
-    N = exprs.shape[1]
+    #N = exprs.shape[1]
     all_samples = set(exprs.columns.values)
     candidates = {}
     n_merges = 0

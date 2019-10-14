@@ -176,7 +176,7 @@ def read_bic_table(results_file_name):
     else:
         resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x: set(x.split(" ")))
         resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x: set(x.split(" ")))
-    resulting_bics.set_index("id",inplace=True)
+    #resulting_bics.set_index("id",inplace=True)
     
     return resulting_bics
     

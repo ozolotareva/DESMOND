@@ -17,8 +17,8 @@ import random
 import gseapy as gp
 from gseapy.stats import calc_pvalues, multiple_testing_correction
 
-sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/breast_cancer_subtypes/"))
-from method import bicluster_avg_SNR
+
+from method import bicluster_avg_SNR, merge_biclusters
 from desmond_io import read_bic_table
 
 #####  read resulted biclusters #######
@@ -73,57 +73,6 @@ def read_B2PS(b2ps_p_file,b2ps_t_file, exprs):
         bics.append({"genes":set(gene_dict[g_clust]),
                      "patients": best_pat_set,"avgSNR":best_SNR })
     return bics
-
-def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs_file,verbose = True):
-    '''1) merge biclusters containg exactly the same genes \n
-    2) revert bicluster if it contains more than 1/2 samples'''
-
-    bic_up = read_bic_table(bic_up_file)
-    if verbose :
-        print("\tUP:",bic_up.shape)
-    bic_up =  bic_up.T.to_dict()
-    
-    bic_down = read_bic_table(bic_down_file)
-    if verbose:
-        print("\tDOWN:",bic_down.shape)
-    bic_down = bic_down.T.to_dict()
-    
-    exprs = pd.read_csv(exprs_file,sep = "\t",index_col=0)
-    N = exprs.shape[1]
-    all_samples = set(exprs.columns.values)
-
-    # if up-and dow-regulated biclustres match remove one with lower SNR
-    for i in bic_up.keys():
-        bic=bic_up[i]
-        for j in bic_down.keys():
-            bic2=bic_down[j]
-            if bic["genes"] == bic2["genes"]:
-                if bic["avgSNR"] > bic2["avgSNR"]:
-                    if verbose:
-                        print("\t\tdrop redundant bicluster",j,bic_down[j]["n_genes"],bic_down[j]["n_samples"],bic_down[j]["direction"],bic_down[j]["avgSNR"])
-                    del bic_down[j]
-                else:
-                    if verbose:
-                        print("\t\tdrop redundant bicluster",i,bic_up[i]["n_genes"],bic_up[i]["n_samples"],bic_up[i]["direction"],bic_up[i]["avgSNR"])
-                    del bic_up[i]
-
-
-    df = pd.concat([pd.DataFrame.from_dict(bic_up).T,pd.DataFrame.from_dict(bic_down).T])
-    df = df.sort_values("avgSNR",ascending=False)
-    # new indexing
-    df.index = range(0,df.shape[0])
-    df_ = df.loc[df["n_samples"]>N/2,:]
-    # new sample sets 
-    df.loc[df_.index,"samples"] = df.loc[df_.index,"samples"].apply(lambda x: all_samples.difference(x))
-    df.loc[df_.index,"n_samples"] = df.loc[df_.index,"samples"].apply(len)
-    # change direction
-    up2down = df_.loc[df_["direction"]=="UP",:].index.values
-    df.loc[up2down ,"direction"] = "DOWN"
-    down2up = df_.loc[df_["direction"]=="DOWN",:].index.values
-    df.loc[down2up ,"direction"] = "UP"
-    if verbose:
-        print("Total biclusters:", df.shape[0])
-    return df
 
 ########## Plotting bicluster statistics  ##############
 def plot_n_bics(methods_dict,methods = [],datasets = ["TCGA-RNAseq","TCGA-micro", "METABRIC"],colors = ['blue','lightblue','lightgreen'],barWidth = 0.2):
