@@ -30,7 +30,7 @@ def prepare_input_data(exprs_file, network_file, verbose = True, min_n_nodes = 3
         try: 
             network = nx.relabel_nodes(network,int)
         except:
-            print("Node names are string", file=sys.stderr)
+            pass#print("Node names are string", file=sys.stderr)
     except:
         # assume ndex format
         import ndex2.client
@@ -152,7 +152,7 @@ def load_object(filename):
     print("loaded data in from file",filename,round(time.time()- t_0,1) , "s", file = sys.stdout)
     return obj
 
-###### save modules ####################
+###### save and read modules #####
 def write_bic_table(resulting_bics, results_file_name):
     if len(resulting_bics) ==0 :
         pass
@@ -166,6 +166,19 @@ def write_bic_table(resulting_bics, results_file_name):
         resulting_bics.sort_values(by=["avgSNR","n_genes","n_samples"],inplace = True, ascending = False)
         resulting_bics["id"] = range(0,resulting_bics.shape[0])
     resulting_bics.to_csv(results_file_name ,sep = "\t", index=False)
+
+def read_bic_table(results_file_name):
+    if not os.path.exists(results_file_name):
+        return pd.DataFrame()
+    resulting_bics = pd.read_csv(results_file_name,sep = "\t")
+    if len(resulting_bics) ==0:
+        return pd.DataFrame()
+    else:
+        resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x: set(x.split(" ")))
+        resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x: set(x.split(" ")))
+    resulting_bics.set_index("id",inplace=True)
+    
+    return resulting_bics
     
 ### plots numnber of oscilating edges and RMS(Pn-Pn+1)
 def plot_convergence(n_skipping_edges,P_diffs, thr_step,n_steps_averaged, outfile = ""):
