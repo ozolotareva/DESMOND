@@ -74,13 +74,14 @@ def calc_not_lesser_bics(SNR, p_size, null_dist_SNR, null_dist_psize):
     # with more samples and higher SNR
     n_not_lesser = 0
     n_higher_SNR = 0
-    for i in range(0, len(null_dist_psize)):
+    N = len(null_dist_psize)
+    for i in range(0, N):
         if null_dist_psize[i] >= p_size:
             n_not_lesser +=1
             if null_dist_SNR[i] >= SNR:
                 n_higher_SNR +=1
     return pd.Series({"n_not_less_samples":n_not_lesser,"n_higher_SNR":n_higher_SNR,
-                      "p_val":(n_higher_SNR+1)*1.0/(n_not_lesser+1)})
+                      "p_val":(n_higher_SNR+1)*1.0/(N+1)})
 
 def calc_gene_overlap_pval(bic,bic2,N):
     g1 = bic["genes"]
@@ -235,7 +236,7 @@ parser.add_argument('-o','--out', dest='out', type=str, help='Output file name.'
 parser.add_argument('-s','--SNR_file', dest='snr_file', type=str, help='File with min_SNR treshold recorded.', required=True)
 parser.add_argument('-ns','--min_n_samples', dest='min_n_samples', type=int, help='Minimal number of samples on edge. If not specified, set to max(10,0.1*cohort_size).', default=0, required=False)
 
-parser.add_argument('-rn', dest='n_permutations', type=int, help='Number of random subnetworks sampled.', default=100, required=False)
+parser.add_argument('-rn', dest='n_permutations', type=int, help='Number of random subnetworks sampled.', default=1000, required=False)
 
 parser.add_argument('--verbose', dest='verbose', action='store_true', help='', required=False)
 
@@ -261,11 +262,11 @@ results_p = []
 g_sizes = results.groupby(by=["n_genes"])["n_genes"].count()
 for g_size in g_sizes.index:
     t0 = time.time()
-    n_random_modules = g_sizes[g_size]*args.n_permutations
+    #n_random_modules = g_sizes[g_size]*args.n_permutations
     if args.verbose:
-        print("n_genes",g_size, "create",n_random_modules,"random subnetworks...", file= sys.stdout)
+        print("n_genes",g_size, "create",args.n_permutations,"random subnetworks...", file= sys.stdout)
     null_dist_SNR, null_dist_psize = generate_null_dist(exprs,network,g_size=g_size,
-                                   n_permutations=n_random_modules)
+                                   n_permutations=args.n_permutations)
     
     df = results.loc[results["n_genes"]==g_size,:]
     df2 = df.apply(lambda row: calc_not_lesser_bics(row["avgSNR"], row["n_samples"],null_dist_SNR, null_dist_psize),axis =1)
