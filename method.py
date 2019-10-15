@@ -766,27 +766,24 @@ def calc_overlap_pval(bic,bic2,all_samples):
     return p_val
 
 def merge_biclusters(biclusters, exprs, min_n_samples=8,
-                     verbose = True,direction="UP", min_SNR=0.5,
+                     verbose = True, min_SNR=0.5,
                      max_SNR_decrease=0.1, J_threshold=0.5,pval_threshold=0.05):
     t0 = time.time()
-    bics = dict(zip([x["id"] for x in biclusters],biclusters))
+    
+    bics = dict(zip(range(0,len(biclusters)), biclusters))
 
-    #N = exprs.shape[1]
     all_samples = set(exprs.columns.values)
     candidates = {}
-    n_merges = 0
-    
     for i in bics.keys():
         bic = bics[i]
         for j in bics.keys():
-            if i != j :
+            if j>i:
                 bic2 = bics[j]
                 J = calc_J(bic,bic2,all_samples) 
                 p_val = calc_overlap_pval(bic,bic2,all_samples)
                 if J>J_threshold and p_val<pval_threshold:
                     candidates[(i,j)] = J
-                
-           
+                     
     nothing_to_merge = False
     
     while not nothing_to_merge and len(candidates.values())>0:       
@@ -796,30 +793,43 @@ def merge_biclusters(biclusters, exprs, min_n_samples=8,
             nothing_to_merge = True
         else:
             maxi, maxj = candidates.keys()[candidates.values().index(max_J)]
-            print("\t\ttry",bics[maxi]["id"],"+",bics[maxj]["id"],
-                  bics[maxi]["direction"],"+",bics[maxj]["direction"])
+            print("\t\ttry merging %s:%sx%s  (%s,%s) + %s:%sx%s  (%s,%s)"%(bics[maxi]["id"],bics[maxi]["n_genes"],
+                                                                           bics[maxi]["n_samples"],
+                                                                           round(bics[maxi]["avgSNR"],2),
+                                                                           bics[maxi]["direction"],
+                                                                           bics[maxj]["id"],bics[maxj]["n_genes"],
+                                                                           bics[maxj]["n_samples"], 
+                                                                           round(bics[maxj]["avgSNR"],2),
+                                                                           bics[maxj]["direction"]))
+            
             # try creating a new bicsluter from bic and bic2
             genes = bics[maxi]["genes"] | bics[maxj]["genes"] 
             new_bic = identify_opt_sample_set(genes, exprs,
-                                              direction=direction,
+                                              direction=bics[maxi]["direction"],
                                               min_n_samples=min_n_samples)
+            if new_bic["avgSNR"]==-1 and bics[maxi]["direction"]!=bics[maxj]["direction"]:
+                new_bic = identify_opt_sample_set(genes, exprs,direction=bics[maxj]["direction"],
+                                                  min_n_samples=min_n_samples)
 
             avgSNR = new_bic["avgSNR"]
             if avgSNR >= min_SNR:
                 # place new_bic to ith bic
                 new_bic["id"] = bics[maxi]["id"]
                 substitution = (bics[maxi]["id"], len(bics[maxi]["genes"]),len(bics[maxi]["samples"]),
-                                    bics[maxi]["avgSNR"],bics[maxi]["direction"],
+                                    round(bics[maxi]["avgSNR"],2),bics[maxi]["direction"],
                                     bics[maxj]["id"], len(bics[maxj]["genes"]), 
                                     len(bics[maxj]["samples"]),
-                                    bics[maxj]["avgSNR"],bics[maxj]["direction"],
+                                    round(bics[maxj]["avgSNR"],2),bics[maxj]["direction"],
                                     round(new_bic["avgSNR"],2),len(new_bic["genes"]),
                                     len(new_bic["samples"]))
                 print("\tMerge biclusters %s:%sx%s (%s,%s) and %s:%sx%s  (%s,%s) --> %s SNR and %sx%s"%substitution)
+                new_bic["n_genes"] = len(new_bic["genes"])
+                new_bic["n_samples"] = len(new_bic["samples"])
+                
                 bics[maxi] = new_bic
                 # deleted J data for ith and jth biclusters
                 for i,j in candidates.keys():
-                    if maxi in (i,j) or maxj in (i,j):
+                    if i == maxj or j == maxj:
                         del candidates[(i,j)]
                 # remove j-th bics jth column and index
                 del bics[maxj]
@@ -828,13 +838,16 @@ def merge_biclusters(biclusters, exprs, min_n_samples=8,
                         J = calc_J(new_bic,bics[j],all_samples)
                         p_val = calc_overlap_pval(new_bic,bics[j],all_samples)
                         if J>J_threshold and p_val<pval_threshold:
-                            candidates[(maxi,j)] = J
+                            if maxi <j:
+                                candidates[(maxi,j)] = J
+                            else:
+                                candidates[(j,maxi)] = J
             else:
                 # set J for this pair to 0
-                print("\t\tSNR=",avgSNR,"set J=",max_J,"-->0")
+                print("\t\tSNR=", round(avgSNR,2),"<",round(min_SNR,2),"--> no merge")
                 candidates[(maxi,maxj)] = 0
      
     if verbose:
         print("time:\tMerging finished in:",round(time.time()-t0,2))
      
-    return bics.values()
+    return bics

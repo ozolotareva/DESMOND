@@ -275,6 +275,8 @@ for genes in gene_clusters:
         low_SNR += 1
     else:
         bic["id"] = bic_id
+        bic["n_genes"] = len(bic["genes"])
+        bic["n_samples"] = len(bic["samples"])
         bic_id+=1
         filtered_bics.append(bic)
     
@@ -290,15 +292,12 @@ from desmond_io import write_bic_table
 
 merged_bics = merge_biclusters(filtered_bics, exprs,
                                min_n_samples=args.min_n_samples,
-                               direction=args.direction,
                                min_SNR=min_SNR, 
                                pval_threshold =0.05,
                                verbose = False)
 
 print("Biclusters remaining after merging:", len(merged_bics))
-for bic in merged_bics:
-    bic["n_genes"] = len(bic["genes"])
-    bic["n_samples"] = len(bic["samples"])
+for bic in merged_bics.values():
     bic["genes"] = { ints2g_names[x] for x in bic["genes"] }
     bic["samples"] = { ints2s_names[x] for x in bic["samples"] }
     print("\t".join(map(str,[bic["id"],bic["n_genes"],bic["n_samples"],

@@ -91,81 +91,6 @@ def calc_gene_overlap_pval(bic,bic2,N):
     g2_only = len(g2.difference(g1))
     p_val = pvalue(g1_g2,g1_only,g2_only,N-g1_g2-g1_only-g2_only).right_tail
     return p_val
-
-def merge_biclusters_by_genes(biclusters, exprs, min_n_samples=8,
-                     verbose = True,direction="UP", min_SNR=0.5,
-                     max_SNR_decrease=0.1, J_threshold=0.5,pval_threshold=0.05):
-    t0 = time.time()
-    bics = dict(zip([x["id"] for x in biclusters],biclusters))
-
-    N = len(set(exprs.index.values))
-    candidates = {}
-    n_merges = 0
-    
-    for i in bics.keys():
-        bic = bics[i]
-        for j in bics.keys():
-            if i != j :
-                bic2 = bics[j]
-                J = len(bic["genes"].intersection(bic2["genes"]))*1.0/len(bic["genes"].union(bic2["genes"]))
-                p_val = calc_gene_overlap_pval(bic,bic2,N)
-                if J>J_threshold and p_val<pval_threshold:
-                    candidates[(i,j)] = J
-                
-           
-    nothing_to_merge = False
-    
-    while not nothing_to_merge and len(candidates.values())>0:       
-        # take max J pair
-        max_J = max(candidates.values())
-        if max_J<J_threshold:
-            nothing_to_merge = True
-        else:
-            maxi, maxj = candidates.keys()[candidates.values().index(max_J)]
-            print("\t\ttry",bics[maxi]["id"],"+",bics[maxj]["id"],
-                  bics[maxi]["direction"],"+",bics[maxj]["direction"])
-            # try creating a new bicsluter from bic and bic2
-            genes = bics[maxi]["genes"] | bics[maxj]["genes"] 
-            new_bic = identify_opt_sample_set(genes, exprs,
-                                              direction=direction,
-                                              min_n_samples=min_n_samples)
-
-            avgSNR = new_bic["avgSNR"]
-            if avgSNR >= min_SNR:
-                # place new_bic to ith bic
-                new_bic["id"] = bics[maxi]["id"]
-                substitution = (bics[maxi]["id"], len(bics[maxi]["genes"]),len(bics[maxi]["samples"]),
-                                    bics[maxi]["avgSNR"],bics[maxi]["direction"],
-                                    bics[maxj]["id"], len(bics[maxj]["genes"]), 
-                                    len(bics[maxj]["samples"]),
-                                    bics[maxj]["avgSNR"],bics[maxj]["direction"],
-                                    round(new_bic["avgSNR"],2),len(new_bic["genes"]),
-                                    len(new_bic["samples"]))
-                print("\tMerge biclusters %s:%sx%s (%s,%s) and %s:%sx%s  (%s,%s) --> %s SNR and %sx%s"%substitution)
-                new_bic["n_genes"] = len(new_bic["genes"])
-                new_bic["n_samples"] = len(new_bic["samples"])
-                bics[maxi] = new_bic
-                # deleted J data for ith and jth biclusters
-                for i,j in candidates.keys():
-                    if maxi in (i,j) or maxj in (i,j):
-                        del candidates[(i,j)]
-                # remove j-th bics jth column and index
-                del bics[maxj]
-                for j in bics.keys():
-                    if j!=maxi:
-                        J = len(new_bic["genes"].intersection(bics[j]["genes"]))*1.0/len(new_bic["genes"].union(bics[j]["genes"]))
-                        p_val = calc_gene_overlap_pval(new_bic,bics[j],N)
-                        if J>J_threshold and p_val<pval_threshold:
-                            candidates[(maxi,j)] = J
-            else:
-                # set J for this pair to 0
-                print("\t\tSNR=",avgSNR,"set J=",max_J,"-->0")
-                candidates[(maxi,maxj)] = 0
-     
-    if verbose:
-        print("time:\tMerging finished in:",round(time.time()-t0,2))
-
-    return bics  
         
 def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs_file, min_SNR=0.5,min_n_samples=5,verbose = True):
     '''1) merge biclusters containg exactly the same genes \n
@@ -200,12 +125,13 @@ def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs_file, min_SNR=0.
     for k in bic_down.keys():
         bic_down[k]["id"] =  bic_down[k]["id"]  + len(bic_up.keys())
     exprs.index = map(str,exprs.index.values)
-    merged_bics = merge_biclusters_by_genes(bic_up.values()+bic_down.values(), exprs,
+
+    merged_bics = merge_biclusters(bic_up.values()+bic_down.values(), exprs,
                                min_n_samples=min_n_samples,
                                min_SNR=min_SNR, 
                                pval_threshold =0.05,
-                               verbose = verbose)
-    
+                               verbose = False)
+
     
     df = pd.DataFrame(merged_bics).T
     df = df.sort_values("avgSNR",ascending=False)
