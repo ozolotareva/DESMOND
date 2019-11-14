@@ -96,17 +96,22 @@ exprs, network = prepare_input_data(args.exprs_file, args.network_file, verbose 
 
 #### change gene and sample names to ints
 exprs,network,ints2g_names,ints2s_names = relabel_exprs_and_network(exprs,network)
+exprs_np = exprs.values
+exprs_sums = exprs_np.sum(axis=1)
+exprs_sq_sums = np.square(exprs_np).sum(axis=1)
+N = exprs.shape[1]
+exprs_data = N, exprs_sums, exprs_sq_sums
 
 #### define minimal number of patients in a module
 if args.min_n_samples == -1:
-    args.min_n_samples = int(max(10,0.05*len(exprs.columns.values))) # set to max(10, 5% of the cohort) 
+    args.min_n_samples = int(max(10,0.05*exprs.shape[1])) # set to max(10, 5% of the cohort) 
 if args. verbose:
     print("Mininal number of samples in a module:",args.min_n_samples ,file=sys.stdout)
 
 #### determine min_SNR from avg.SNR distributions among 1000 random edges
 from method import define_SNR_threshold
 snr_file = args.out_dir+basename +",q="+str(args.q) +".SNR_threshold.txt"
-min_SNR = define_SNR_threshold(snr_file, exprs,network, args.q, 
+min_SNR = define_SNR_threshold(snr_file, exprs_np, exprs_data,network, args.q, 
                                min_n_samples=args.min_n_samples)
 if args.verbose:
     print("Mininal avg. |SNR| threshold:\t%s (q=%s)"%(min_SNR,args.q),file=sys.stdout)
@@ -129,7 +134,7 @@ else:
     network = expression_profiles2nodes(network, exprs, args.direction)
 
     # define step for RRHO
-    fixed_step = int(max(1,0.01*len(exprs.columns.values))) # 5-10-20 ~15
+    fixed_step = int(max(1,0.01*exprs.shape[1])) # 5-10-20 ~15
     if args. verbose:
         print("Fixed step for RRHO selected:", fixed_step, file =sys.stdout)
     rrho_thresholds = precompute_RRHO_thresholds(exprs, fixed_step = fixed_step,significance_thr=args.p_val)
@@ -156,7 +161,6 @@ from method import sampling
 # simplifying probability calculations
 max_log_float = np.log(np.finfo(np.float64).max)
 n_exp_orders = 7 # ~1000 times 
-N = exprs.shape[1]
 p0 = N*np.log(0.5)+np.log(args.beta_K)
 match_score = np.log((args.alpha*0.5+1)/(args.alpha))
 mismatch_score = np.log((args.alpha*0.5+0)/args.alpha)
@@ -166,14 +170,13 @@ bK_1 = math.log(1+args.beta_K)
 if args.verbose:
     print("Compute initial conditions...",file = sys.stdout)
 
-[moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, moduleOneFreqs, network] = set_initial_conditions(network,exprs,p0,match_score,mismatch_score,bK_1, N,log_func=np.log,alpha = args.alpha, beta_K = args.beta_K,verbose = args.verbose)
+[moduleSizes, edge2Patients, nOnesPerPatientInModules, edge2Module, moduleOneFreqs, network] = set_initial_conditions(network,p0,match_score,mismatch_score,bK_1,N,alpha = args.alpha, beta_K = args.beta_K,verbose = args.verbose)
 
 ### Sampling
 print("Start sampling ...",file = sys.stdout) 
 t0 = time.time()
-edge2Module_history,n_final_steps,n_skipping_edges,P_diffs = sampling(network,exprs, edge2Module, edge2Patients, nOnesPerPatientInModules,moduleSizes,moduleOneFreqs, p0, match_score,mismatch_score, bK_1,log_func=np.log, alpha = args.alpha, beta_K = args.beta_K, max_n_steps=args.max_n_steps, n_steps_averaged = args.n_steps_averaged, n_points_fit = 10, tol = 0.1, n_steps_for_convergence = args.n_steps_for_convergence, edge_ordering = "shuffle", verbose=args.verbose)
+edge2Module_history,n_final_steps,n_skipping_edges,P_diffs = sampling(network,edge2Module, edge2Patients, nOnesPerPatientInModules,moduleSizes,moduleOneFreqs, p0, match_score,mismatch_score, bK_1, alpha = args.alpha, beta_K = args.beta_K, max_n_steps=args.max_n_steps, n_steps_averaged = args.n_steps_averaged, n_points_fit = 10, tol = 0.1, n_steps_for_convergence = args.n_steps_for_convergence, edge_ordering = "shuffle", verbose=args.verbose)
 print("time:\tSampling (%s steps) fininshed in %s s." %(len(edge2Module_history),round(time.time()-t0,2)), file = sys.stdout)
-
 
 if args.plot_all:
     from desmond_io import plot_convergence
@@ -185,7 +188,7 @@ if args.plot_all:
 edge2Module_history = edge2Module_history[-n_final_steps:]
 
 ### get consensus edge-to-module membership
-consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, moduleOneFreqs = get_consensus_modules(edge2Module_history, network, edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes, moduleOneFreqs, p0,match_score,mismatch_score, bK_1,log_func=np.log, alpha=args.alpha,beta_K=args.beta_K)
+consensus_edge2module, network, edge2Patients, nOnesPerPatientInModules, moduleSizes, moduleOneFreqs = get_consensus_modules(edge2Module_history, network, edge2Patients, edge2Module, nOnesPerPatientInModules,moduleSizes, moduleOneFreqs, p0,match_score,mismatch_score, bK_1, alpha=args.alpha,beta_K=args.beta_K)
 
 print("Empty modules:", len([x for x in moduleSizes if x == 0]),
       "\nNon-empty modules:",len([x for x in moduleSizes if x > 0]))
@@ -195,7 +198,6 @@ from desmond_io import write_bic_table
 from method import get_genes, identify_opt_sample_set, merge_biclusters
 
 t0 = time.time()
-
 #### Identified optimal patient sets for each module: split patients into two sets in a subspace of each module
 filtered_bics = []
 few_genes = 0
@@ -205,7 +207,7 @@ low_SNR = 0
 for mid in range(0,len(moduleSizes)):
     if moduleSizes[mid]>1: # exclude biclusters with too few genes
         genes = get_genes(mid,consensus_edge2module,network.edges())
-        bic = identify_opt_sample_set(genes, exprs,
+        bic = identify_opt_sample_set(genes, exprs_np, exprs_data,
                                       direction=args.direction,
                                       min_n_samples=args.min_n_samples)
         avgSNR = bic["avgSNR"]
@@ -230,10 +232,9 @@ print("\tModules not passed avg. |SNR| threshold:", low_SNR, file = sys.stdout)
 
 print("\nPassed modules with >= 2 edges and >= %s samples: %s"%(args.min_n_samples,len(filtered_bics)), file = sys.stdout)
 
-
-
 #### Merge remaining biclusters 
-merged_bics = merge_biclusters(filtered_bics, exprs,min_n_samples=args.min_n_samples,min_SNR=min_SNR,verbose = True)
+merged_bics = merge_biclusters(filtered_bics, exprs_np, exprs_data,
+                               min_n_samples=args.min_n_samples,min_SNR=min_SNR,verbose = True)
 
 print("Modules remaining after merging:", len(merged_bics))
 

@@ -12,8 +12,8 @@ from sklearn.cluster import KMeans
 
 #sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
 
-from desmond_io import prepare_input_data,read_bic_table
-from method import merge_biclusters,identify_opt_sample_set
+from desmond_io import prepare_input_data, read_bic_table
+from method import merge_biclusters
 
 def get_rand_subnet(network, g_size, max_n_restarts=10):
     n = random.choice(network.nodes())
@@ -39,7 +39,7 @@ def get_rand_subnet(network, g_size, max_n_restarts=10):
                 n = random.choice(network.nodes())
                 genes = set([n])
                 n_restatrs += 1
-    return genes
+    return list(genes)
 
 def generate_null_dist(exprs,network,g_size=3,n_permutations=100):
     """Generates N random subnetworks of given size"""
@@ -49,7 +49,7 @@ def generate_null_dist(exprs,network,g_size=3,n_permutations=100):
     for p in range(0,n_permutations):
         #if p%1000 == 0:
         #    print("\t\tg_size:", g_size, "iteraton:",p)
-        e = exprs.loc[get_rand_subnet(network, g_size),:]
+        e = exprs[get_rand_subnet(network, g_size),:]
         labels = KMeans(n_clusters=2, random_state=0,n_init=1,max_iter=100).fit(e.T).labels_
         ndx0 = np.where(labels == 0)[0]
         ndx1 = np.where(labels == 1)[0]
@@ -57,15 +57,11 @@ def generate_null_dist(exprs,network,g_size=3,n_permutations=100):
             p_size = len(ndx1)
         else:
             p_size = len(ndx0)
-        e1 = e.iloc[:,ndx1]
-        e0 = e.iloc[:,ndx0]
+        e1 = e[:,ndx1]
+        e0 = e[:,ndx0]
         SNR = np.mean(abs(e0.mean(axis=1)-e1.mean(axis=1))/(e0.std(axis=1)+e1.std(axis=1)))
         null_dist_psize.append(p_size)
         null_dist_SNR.append(SNR)
-    #print("\tp_sizes:",np.mean(null_dist_psize),np.min(null_dist_psize),"-",
-    #     np.max(null_dist_psize), file = sys.stdout)
-    #print("\tSNR:",np.mean(null_dist_SNR),np.min(null_dist_SNR),"-",
-    #     np.max(null_dist_SNR), file = sys.stdout)
     return null_dist_SNR, null_dist_psize
 
 
@@ -92,17 +88,23 @@ def calc_gene_overlap_pval(bic,bic2,N):
     p_val = pvalue(g1_g2,g1_only,g2_only,N-g1_g2-g1_only-g2_only).right_tail
     return p_val
         
-def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs_file, min_SNR=0.5,min_n_samples=5,verbose = True):
+def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs, exprs_data,g_names2ints,s_names2ints,
+                              min_SNR=0.5,min_n_samples=5,verbose = True):
     '''1) merge biclusters containg exactly the same genes \n
     2) revert bicluster if it contains more than 1/2 samples'''
 
     if os.path.exists(bic_up_file):
         bic_up_df = read_bic_table(bic_up_file)
+        bic_up_df["genes"] = bic_up_df["genes"].apply(lambda x : g_names2ints[])
+        bic_up_df["samples"] = bic_up_df["samples"].apply(lambda x : s_names2ints[])
         bic_up =  bic_up_df.T.to_dict()
     else:
         bic_up = {}
+        
     if os.path.exists(bic_down_file):
         bic_down_df = read_bic_table(bic_down_file)
+        bic_down_df["genes"] = bic_down_df["genes"].apply(lambda x : g_names2ints[])
+        bic_down_df["samples"] = bic_down_df["samples"].apply(lambda x : s_names2ints[])
         
         bic_down = bic_down_df.T.to_dict()
     else:
@@ -115,17 +117,14 @@ def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs_file, min_SNR=0.
         return bic_down_df
     if  bic_down.keys() == 0:
         return bic_up_df
+   
+    all_samples = set(exprs.shape[1])
     
-    exprs = pd.read_csv(exprs_file,sep = "\t",index_col=0)
-    N = exprs.shape[1]
-    all_samples = set(exprs.columns.values)
-    
-    # try merging overlapping biclusters 
     # rename keys in down-regulated bics
     for k in bic_down.keys():
         bic_down[k]["id"] =  bic_down[k]["id"]  + len(bic_up.keys())
-    exprs.index = map(str,exprs.index.values)
-
+    
+    # try merging overlapping biclusters 
     merged_bics = merge_biclusters(bic_up.values()+bic_down.values(), exprs,
                                min_n_samples=min_n_samples,
                                min_SNR=min_SNR, 
@@ -171,6 +170,18 @@ start_time = time.time()
 args = parser.parse_args()
 
 exprs, network = prepare_input_data(args.exprs_file,args.network_file, verbose = args.verbose)
+#### change gene and sample names to ints
+exprs,network,ints2g_names,ints2s_names = relabel_exprs_and_network(exprs,network)
+# revert name dictionaries
+g_names2ints = {v: k for k, v in ints2g_names.iteritems()}
+s_names2ints = {v: k for k, v in ints2s_names.iteritems()}
+### prepare expression files
+exprs = exprs.values
+exprs_sums = exprs.sum(axis=1)
+exprs_sq_sums = np.square(exprs).sum(axis=1)
+N = exprs.shape[1]
+exprs_data = N, exprs_sums, exprs_sq_sums
+
 
 if args.min_n_samples==0:
     args.min_n_samples = max(10,int(0.1*exprs.shape[1]))
@@ -181,7 +192,7 @@ f = open(args.snr_file,"r")
 min_SNR = float(f.readlines()[0].rstrip())
 print("avg.SNR threshold:",min_SNR)        
 
-results = summarize_DESMOND_results(args.up, args.down, args.exprs_file,
+results = summarize_DESMOND_results(args.up, args.down, exprs,exprs_data,g_names2ints,s_names2ints,
                                     min_SNR=min_SNR,min_n_samples=args.min_n_samples,verbose = args.verbose)
 
 results_p = []
@@ -201,8 +212,8 @@ for g_size in g_sizes.index:
         print("\truntime", round(time.time()-t0,2),"s", file= sys.stdout)
 results_p = pd.concat(results_p, axis =0)
 
-results_p["genes"] = results_p["genes"].apply(lambda x:" ".join(map(str,x)))
-results_p["samples"] = results_p["samples"].apply(lambda x:" ".join(map(str,x)))
+results_p["genes"] = results_p["genes"].apply(lambda x:" ".join(map(str,ints2g_names(x))))
+results_p["samples"] = results_p["samples"].apply(lambda x:" ".join(map(str,ints2s_namesx))))
 results_p = results_p[["id","n_genes","n_samples","avgSNR","direction","p_val","n_not_less_samples","n_higher_SNR","genes","samples"]]
 results_p.loc[:,"id"] = range(0,results_p.shape[0])
 results_p.set_index("id", drop = True, inplace = True)
