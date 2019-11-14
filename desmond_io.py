@@ -157,7 +157,7 @@ def write_bic_table(resulting_bics, results_file_name):
     if len(resulting_bics) ==0 :
         pass
     else:
-        resulting_bics = pd.DataFrame.from_dict(resulting_bics).T
+        resulting_bics = pd.DataFrame.from_dict(resulting_bics)
         resulting_bics["genes"] = resulting_bics["genes"].apply(lambda x:" ".join(map(str,x)))
         resulting_bics["samples"] = resulting_bics["samples"].apply(lambda x:" ".join(map(str,x)))
         resulting_bics = resulting_bics[["id","avgSNR","n_genes","n_samples","direction","genes","samples"]]
