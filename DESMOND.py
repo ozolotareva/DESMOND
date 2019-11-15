@@ -18,8 +18,6 @@ import argparse
 import pickle
 import math
 
-sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
-
 from desmond_io import prepare_input_data, load_network
 from method import relabel_exprs_and_network
 

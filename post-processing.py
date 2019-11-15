@@ -10,8 +10,6 @@ import argparse
 from fisher import pvalue
 from sklearn.cluster import KMeans
 
-#sys.path.append(os.path.abspath("/home/olya/SFU/Breast_cancer/DESMOND/"))
-
 from desmond_io import prepare_input_data, read_bic_table
 from method import merge_biclusters
 
@@ -95,16 +93,16 @@ def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs, exprs_data,g_na
 
     if os.path.exists(bic_up_file):
         bic_up_df = read_bic_table(bic_up_file)
-        bic_up_df["genes"] = bic_up_df["genes"].apply(lambda x : g_names2ints[])
-        bic_up_df["samples"] = bic_up_df["samples"].apply(lambda x : s_names2ints[])
+        bic_up_df["genes"] = bic_up_df["genes"].apply(lambda x : set(map(lambda y : g_names2ints[y],x)))
+        bic_up_df["samples"] = bic_up_df["samples"].apply(lambda x : set(map(lambda y : s_names2ints[y],x)))
         bic_up =  bic_up_df.T.to_dict()
     else:
         bic_up = {}
         
     if os.path.exists(bic_down_file):
         bic_down_df = read_bic_table(bic_down_file)
-        bic_down_df["genes"] = bic_down_df["genes"].apply(lambda x : g_names2ints[])
-        bic_down_df["samples"] = bic_down_df["samples"].apply(lambda x : s_names2ints[])
+        bic_down_df["genes"] = bic_down_df["genes"].apply(lambda x : set(map(lambda y : g_names2ints[y],x)))
+        bic_down_df["samples"] = bic_down_df["samples"].apply(lambda x : set(map(lambda y : s_names2ints[y],x)))
         
         bic_down = bic_down_df.T.to_dict()
     else:
@@ -118,14 +116,14 @@ def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs, exprs_data,g_na
     if  bic_down.keys() == 0:
         return bic_up_df
    
-    all_samples = set(exprs.shape[1])
+    all_samples = set(range(exprs.shape[1]))
     
     # rename keys in down-regulated bics
     for k in bic_down.keys():
         bic_down[k]["id"] =  bic_down[k]["id"]  + len(bic_up.keys())
     
     # try merging overlapping biclusters 
-    merged_bics = merge_biclusters(bic_up.values()+bic_down.values(), exprs,
+    merged_bics = merge_biclusters(bic_up.values()+bic_down.values(), exprs, exprs_data,
                                min_n_samples=min_n_samples,
                                min_SNR=min_SNR, 
                                pval_threshold =0.05,
@@ -149,6 +147,15 @@ def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs, exprs_data,g_na
         print("Total biclusters:", df.shape[0])
     return df
 
+def relabel_exprs_and_network(exprs,network):
+    'Changes gene and sample names to ints'
+    g_names2ints  = dict(zip(exprs.index.values, range(0,exprs.shape[0])))
+    ints2g_names = exprs.index.values
+    s_names2ints = dict(zip(exprs.columns.values, range(0,exprs.shape[1])))  
+    ints2s_names = exprs.columns.values
+    exprs.rename(index = g_names2ints, columns = s_names2ints,inplace=True)
+    network=nx.relabel_nodes(network,g_names2ints)
+    return exprs,network, ints2g_names,ints2s_names,g_names2ints,s_names2ints
 
 parser = argparse.ArgumentParser(description="""Generates random subnetworks of size given sizes and calculates empirical p-values for obsered avg. |SNR| values.""" , formatter_class=argparse.RawTextHelpFormatter)
 
@@ -171,10 +178,8 @@ args = parser.parse_args()
 
 exprs, network = prepare_input_data(args.exprs_file,args.network_file, verbose = args.verbose)
 #### change gene and sample names to ints
-exprs,network,ints2g_names,ints2s_names = relabel_exprs_and_network(exprs,network)
-# revert name dictionaries
-g_names2ints = {v: k for k, v in ints2g_names.iteritems()}
-s_names2ints = {v: k for k, v in ints2s_names.iteritems()}
+exprs, network, ints2g_names, ints2s_names, g_names2ints,s_names2ints = relabel_exprs_and_network(exprs,network)
+
 ### prepare expression files
 exprs = exprs.values
 exprs_sums = exprs.sum(axis=1)
@@ -192,16 +197,20 @@ f = open(args.snr_file,"r")
 min_SNR = float(f.readlines()[0].rstrip())
 print("avg.SNR threshold:",min_SNR)        
 
+t0=time.time()
+print("time:\t Inputs read in %s s."%(round(time.time()-start_time,2)), file= sys.stdout)
 results = summarize_DESMOND_results(args.up, args.down, exprs,exprs_data,g_names2ints,s_names2ints,
                                     min_SNR=min_SNR,min_n_samples=args.min_n_samples,verbose = args.verbose)
+print("time:\t Up- and down-regulated biclusets united in %s s."%(round(time.time()-t0,2)), file= sys.stdout)
 
+t0=time.time()
 results_p = []
 g_sizes = results.groupby(by=["n_genes"])["n_genes"].count()
 for g_size in g_sizes.index:
     t0 = time.time()
     #n_random_modules = g_sizes[g_size]*args.n_permutations
     if args.verbose:
-        print("n_genes",g_size, "create",args.n_permutations,"random subnetworks...", file= sys.stdout)
+        print("\t\tn_genes",g_size, "create",args.n_permutations,"random subnetworks...", file= sys.stdout)
     null_dist_SNR, null_dist_psize = generate_null_dist(exprs,network,g_size=g_size,
                                    n_permutations=args.n_permutations)
     
@@ -210,11 +219,15 @@ for g_size in g_sizes.index:
     results_p.append(pd.concat([df,df2],axis=1))
     if args.verbose:
         print("\truntime", round(time.time()-t0,2),"s", file= sys.stdout)
+print("time:\t Random subnetworks (%s per each bicluster size) created in %s s."%(args.n_permutations,
+                                                                                  round(time.time()-t0,2)), file= sys.stdout)
 results_p = pd.concat(results_p, axis =0)
 
-results_p["genes"] = results_p["genes"].apply(lambda x:" ".join(map(str,ints2g_names(x))))
-results_p["samples"] = results_p["samples"].apply(lambda x:" ".join(map(str,ints2s_namesx))))
+results_p["genes"] = results_p["genes"].apply(lambda x:" ".join(sorted(map(lambda y: ints2g_names[y],x))))
+results_p["samples"] = results_p["samples"].apply(lambda x:" ".join(sorted(map(lambda y: ints2s_names[y],x))))
 results_p = results_p[["id","n_genes","n_samples","avgSNR","direction","p_val","n_not_less_samples","n_higher_SNR","genes","samples"]]
 results_p.loc[:,"id"] = range(0,results_p.shape[0])
 results_p.set_index("id", drop = True, inplace = True)
+results_p.sort_values(by="n_genes", ascending = False).sort_values(by="n_genes", ascending = False)
 results_p.to_csv(args.out, sep = "\t")
+print("Total runtime:\t %s s."%(round(time.time()-start_time,2)), file= sys.stdout)

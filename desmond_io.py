@@ -16,7 +16,9 @@ def prepare_input_data(exprs_file, network_file, verbose = True, min_n_nodes = 3
     \n2) Keeps only genes presenting in the network and expression matrix and retains only large connected components with more than min_n_nodes nodes. '''
     ### read expressoin matrix
     exprs = pd.read_csv(exprs_file, sep = "\t",index_col=0)
-    #exprs.rename(str,axis="index",inplace=True) # this is because 
+    # ensure row and columna names are strings 
+    exprs.rename(str,axis="index",inplace=True)
+    exprs.rename(str,axis="columns",inplace=True)
     exprs_genes = exprs.index.values
 
     if len(set(exprs_genes)) != len(exprs_genes):
@@ -27,10 +29,6 @@ def prepare_input_data(exprs_file, network_file, verbose = True, min_n_nodes = 3
     # try reading .tab network, e.g.gene1\tgene2\t...
     try:
         network = nx.read_weighted_edgelist(network_file)
-        try: 
-            network = nx.relabel_nodes(network,int)
-        except:
-            pass#print("Node names are string", file=sys.stderr)
     except:
         # assume ndex format
         import ndex2.client
@@ -48,7 +46,7 @@ def prepare_input_data(exprs_file, network_file, verbose = True, min_n_nodes = 3
     ccs = list(nx.connected_component_subgraphs(network))
     if verbose:
         print("Input:\n","\texpressions:",len(exprs_genes),"genes x",len(set(exprs.columns.values)),"samples;",
-              "\n\tnetwork:",len(network_genes),"genes,",len(network.edges()) ,"edges in",len(ccs),"connected components:"
+              "\n\tnetwork:",len(network_genes),"genes,",len(network.edges()) ,"edges in",len(ccs),"connected components."
               ,file=sys.stdout)
 
     network_genes = network.nodes()
@@ -76,7 +74,6 @@ def prepare_input_data(exprs_file, network_file, verbose = True, min_n_nodes = 3
     network = nx.subgraph(network,genes)
     exprs = exprs.loc[genes,:]
     ccs = list(nx.connected_component_subgraphs(network))
-    
     
     if verbose:
         print("Processed Input:\n","\texpressions:",len(exprs.index.values),"genes x",len(set(exprs.columns.values)),"samples;",
