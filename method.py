@@ -803,7 +803,6 @@ def calc_overlap_pval_J(bic,bic2,all_samples):
 def merge_biclusters(biclusters, exprs, exprs_data, min_n_samples=5,
                      verbose = True, min_SNR=0.5,J_threshold=0.25,pval_threshold=0.05,
                      merge_discordant=False):
-    print("merge_discordant",merge_discordant)
     t0 = time.time()
     
     n_bics = len(biclusters)

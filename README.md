@@ -21,7 +21,7 @@ python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out
 python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
  --alpha $a --p_val $p_val -q $q  --direction DOWN --verbose > $outdir/$proj_name.DOWN.LOG 2> $outdir/$proj_name.DOWN.ERR;
 
-# merge up- and down-regulated biclusters and calculate empirical p-values
+# calculate empirical p-values and merge up- and dow-regulated biclusters if necessary
 
 python post-processing.py --up $outdir/$proj_name.'alpha='$a',beta_K='$b',direction=UP,p_val='$p_val',q='$q.biclusters.tsv \
 --down $outdir/$proj_name.'alpha='$a',beta_K='$b',direction=DOWN,p_val='$p_val',q='$q.biclusters.tsv \

@@ -132,7 +132,6 @@ def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs, exprs_data,g_na
 
     
     df = pd.DataFrame(merged_bics)
-    df.to_csv("bics.tmp.tsv",sep ="\t")
     df = df.sort_values("avgSNR",ascending=False)
     # new indexing
     df.index = range(0,df.shape[0])
