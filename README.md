@@ -8,7 +8,6 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
 
 
 
-
 ### Input
 
  * matrix of normalized gene expressions; first row and column contain gene and sample names respectively
@@ -16,15 +15,23 @@ DESMOND accepts gene expression matrix and gene interaction network and identifi
  
 ### Usage example
 
-| Disclaimer:  the method is still under development and is not properly tested |
-|---|
-
 ```
 python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
---alpha 0.5 --p_val 0.01 --q 0.5  --direction [UP|DOWN] --verbose --save-gc >LOG 2>ERR;
+ --alpha $a --p_val $p_val -q $q  --direction UP --verbose  > $outdir/$proj_name.UP.LOG 2> $outdir/$proj_name.UP.ERR;
+python DESMOND.py --exprs $exprs --network $network  --basename $proj_name --out_dir $outdir \
+ --alpha $a --p_val $p_val -q $q  --direction DOWN --verbose > $outdir/$proj_name.DOWN.LOG 2> $outdir/$proj_name.DOWN.ERR;
+
+# merge up- and down-regulated biclusters and calculate empirical p-values
+
+python post-processing.py --up $outdir/$proj_name.'alpha='$a',beta_K='$b',direction=UP,p_val='$p_val',q='$q.biclusters.tsv \
+--down $outdir/$proj_name.'alpha='$a',beta_K='$b',direction=DOWN,p_val='$p_val',q='$q.biclusters.tsv \
+--exprs $exprs --network $network -s $outdir/$proj_name',q='$q'.SNR_threshold.txt' \
+--out $outdir/$proj_name.'alpha='$a',beta_K='$b',p_val='$p_val',q='$q.biclusters.permutations.tsv  --verbose  > $outdir/$proj_name.permutations.LOG 2> $outdir/$proj_name.permutations.ERR;
 
 ```
 ### Output
  * \*.biclusters.tsv - list of identified biclusters.
  * \*.network.txt  - temporary network file, contains the network with samples assigned on edges. This file is used for restarts with the same network and parameters 'direction', 'p_val', 'min_SNR' and 'min_n_samples'.
- * \*.gene_clusters.txt - gene clusters resulting in sampling phase.
+
+### Cite
+https://www.biorxiv.org/content/10.1101/2020.04.23.055004v1.full
