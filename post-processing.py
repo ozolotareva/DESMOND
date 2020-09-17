@@ -87,7 +87,7 @@ def calc_gene_overlap_pval(bic,bic2,N):
     return p_val
         
 def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs, exprs_data,g_names2ints,s_names2ints,
-                              min_SNR=0.5,min_n_samples=5,verbose = True):
+                              min_SNR=0.5,min_n_samples=5,verbose = True, merge_discordant=False):
     '''1) merge biclusters containg exactly the same genes \n
     2) revert bicluster if it contains more than 1/2 samples'''
 
@@ -127,10 +127,12 @@ def summarize_DESMOND_results(bic_up_file, bic_down_file, exprs, exprs_data,g_na
                                min_n_samples=min_n_samples,
                                min_SNR=min_SNR, 
                                pval_threshold =0.05,
-                               verbose = False)
+                               verbose = verbose,
+                               merge_discordant = merge_discordant)
 
     
     df = pd.DataFrame(merged_bics)
+    df.to_csv("bics.tmp.tsv",sep ="\t")
     df = df.sort_values("avgSNR",ascending=False)
     # new indexing
     df.index = range(0,df.shape[0])
@@ -167,6 +169,8 @@ parser.add_argument('-d','--down', dest='down', type=str, help='Down-regulated b
 parser.add_argument('-o','--out', dest='out', type=str, help='Output file name.', default='.', required=False)
 parser.add_argument('-s','--SNR_file', dest='snr_file', type=str, help='File with min_SNR treshold recorded.', required=True)
 parser.add_argument('-ns','--min_n_samples', dest='min_n_samples', type=int, help='Minimal number of samples on edge. If not specified, set to max(10,0.1*cohort_size).', default=0, required=False)
+parser.add_argument('--merge_discordant', dest='merge_discordant', action='store_true', help='Whether to merge up- and down-regulated biclustert if their sample sets are similar.', required=False)
+
 
 parser.add_argument('-rn', dest='n_permutations', type=int, help='Number of random subnetworks sampled.', default=1000, required=False)
 
@@ -200,7 +204,8 @@ print("avg.SNR threshold:",min_SNR)
 t0=time.time()
 print("time:\t Inputs read in %s s."%(round(time.time()-start_time,2)), file= sys.stdout)
 results = summarize_DESMOND_results(args.up, args.down, exprs,exprs_data,g_names2ints,s_names2ints,
-                                    min_SNR=min_SNR,min_n_samples=args.min_n_samples,verbose = args.verbose)
+                                    min_SNR=min_SNR,min_n_samples=args.min_n_samples,
+                                    merge_discordant=args.merge_discordant, verbose = args.verbose)
 print("time:\t Up- and down-regulated biclusets united in %s s."%(round(time.time()-t0,2)), file= sys.stdout)
 
 t0=time.time()
@@ -219,6 +224,7 @@ for g_size in g_sizes.index:
     results_p.append(pd.concat([df,df2],axis=1))
     if args.verbose:
         print("\truntime", round(time.time()-t0,2),"s", file= sys.stdout)
+        
 print("time:\t Random subnetworks (%s per each bicluster size) created in %s s."%(args.n_permutations,
                                                                                   round(time.time()-t0,2)), file= sys.stdout)
 results_p = pd.concat(results_p, axis =0)

@@ -752,6 +752,28 @@ def identify_opt_sample_set(genes,exprs,exprs_data,direction="UP",min_n_samples=
     else:
         return {"avgSNR":-1}
 
+def identify_opt_sample_set_for_discordant(genes,exprs,exprs_data,min_n_samples=8):
+    N, exprs_sums, exprs_sq_sums = exprs_data
+    e = exprs[genes,:]
+    
+    labels = KMeans(n_clusters=2, random_state=0).fit(e.T).labels_
+    ndx0 = np.where(labels == 0)[0]
+    ndx1 = np.where(labels == 1)[0]
+    if min(len(ndx1),len(ndx0))< min_n_samples:
+        return {"avgSNR":-1}
+    
+    # biclsuter is a smaller group, direction = "MIXED"
+    if len(ndx0) <= len(ndx1):
+        samples = ndx0
+    else:
+        samples = ndx1
+        
+    avgSNR = calc_bic_SNR(genes, samples, exprs, N, exprs_sums, exprs_sq_sums)
+
+    bic = {"genes":set(genes),"n_genes":len(genes),
+               "samples":set(samples),"n_samples":len(samples),
+               "avgSNR":avgSNR,"direction":"MIXED"}
+    return bic
 
 #### Merging  ### 
 
@@ -779,7 +801,9 @@ def calc_overlap_pval_J(bic,bic2,all_samples):
 
 
 def merge_biclusters(biclusters, exprs, exprs_data, min_n_samples=5,
-                     verbose = True, min_SNR=0.5,J_threshold=0.25,pval_threshold=0.05):
+                     verbose = True, min_SNR=0.5,J_threshold=0.25,pval_threshold=0.05,
+                     merge_discordant=False):
+    print("merge_discordant",merge_discordant)
     t0 = time.time()
     
     n_bics = len(biclusters)
@@ -793,6 +817,7 @@ def merge_biclusters(biclusters, exprs, exprs_data, min_n_samples=5,
             if j>i:
                 bic2 = bics[j]
                 p_val, J = calc_overlap_pval_J(bic,bic2,all_samples)
+                
                 p_val=p_val*n_bics
                 if p_val<pval_threshold:# and J>J_threshold: 
                     candidates[(i,j)] = p_val,J
@@ -829,11 +854,23 @@ def merge_biclusters(biclusters, exprs, exprs_data, min_n_samples=5,
             
             # try creating a new bicsluter from bic and bic2
             genes = list(bics[opt_i]["genes"] | bics[opt_j]["genes"])
-            new_bic = identify_opt_sample_set(genes,exprs,exprs_data, 
-                                              direction=bics[opt_i]["direction"],
-                                              min_n_samples=min_n_samples)
-            if new_bic["avgSNR"]==-1 and bics[opt_i]["direction"]!=bics[opt_j]["direction"]:
-                new_bic = identify_opt_sample_set(genes, exprs, exprs_data, direction=bics[opt_j]["direction"],min_n_samples=min_n_samples)
+            
+            
+            if merge_discordant:
+                if bics[opt_i]["direction"]!=bics[opt_j]["direction"]:
+                    new_bic = identify_opt_sample_set_for_discordant(genes,exprs,exprs_data,min_n_samples=min_n_samples)
+                else:
+                    new_bic = identify_opt_sample_set(genes,exprs,exprs_data, 
+                                                  direction=bics[opt_i]["direction"],
+                                                  min_n_samples=min_n_samples)
+            else:
+                new_bic = identify_opt_sample_set(genes,exprs,exprs_data, 
+                                                  direction=bics[opt_i]["direction"],
+                                                  min_n_samples=min_n_samples)
+                if new_bic["avgSNR"]==-1 and bics[opt_i]["direction"]!=bics[opt_j]["direction"]:
+                    new_bic = identify_opt_sample_set(genes, exprs, exprs_data,
+                                                          direction=bics[opt_j]["direction"],
+                                                          min_n_samples=min_n_samples)
 
             avgSNR = new_bic["avgSNR"]
             if avgSNR >= min_SNR:
