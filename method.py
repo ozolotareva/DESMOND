@@ -150,7 +150,10 @@ def calc_bic_SNR(genes, samples, exprs, N, exprs_sums, exprs_sq_sums):
 def calc_mean_std_by_powers(powers):
     count, val_sum, sum_sq = powers
 
-    mean = val_sum / count  # what if count == 0?
+    if count == 0:
+        return np.nan, np.nan
+
+    mean = val_sum / count
     std = np.sqrt((sum_sq / count) - mean*mean)
     return mean, std
 
@@ -266,7 +269,7 @@ def set_initial_conditions(network, p0, match_score, mismatch_score, bK_1, N, al
     t_0 = time.time()
     i = 0
     for n1, n2, data in network.edges(data=True):
-        #del data['masked']
+        # del data['masked']
         del data['samples']
         data['m'] = i
         data['e'] = i
@@ -447,8 +450,14 @@ def sampling(network, edge2Module, edge2Patients, nOnesPerPatientInModules, modu
                 not_changed_edges = 0
                 t_1 = time.time()
         if verbose:
-            print("\tstep ", step, "\t% edges not changed", round(1.0*not_changed_edges/len(edge_order), 3), "\truntime:",
-                  round(time.time() - t_0, 1), "s", file=sys.stdout)
+            try:
+                tmp = round(1.0*not_changed_edges/len(edge_order), 3)
+                print("\tstep ", step, "\t% edges not changed", tmp,
+                      "\truntime:", round(time.time() - t_0, 1), "s",
+                      file=sys.stdout)
+            except ZeroDivisionError:
+                print("\tstep ", step, "\t% edges not changed", "\truntime:",
+                      round(time.time() - t_0, 1), "s", file=sys.stdout)
 
         edge2Module_history.append(copy.copy(edge2Module))
         if step == n_steps_averaged:
@@ -786,13 +795,13 @@ def merge_biclusters(biclusters, exprs, exprs_data, min_n_samples=5,
                                     round(bics[opt_i]["avgSNR"],
                                           2), bics[opt_i]["direction"],
                                     bics[opt_j]["id"], len(
-                                        bics[opt_j]["genes"]),
-                                    len(bics[opt_j]["samples"]),
-                                    round(bics[opt_j]["avgSNR"],
-                                          2), bics[opt_j]["direction"],
-                                    round(new_bic["avgSNR"], 2), len(
-                                        new_bic["genes"]),
-                                    len(new_bic["samples"]))
+                        bics[opt_j]["genes"]),
+                        len(bics[opt_j]["samples"]),
+                        round(bics[opt_j]["avgSNR"],
+                              2), bics[opt_j]["direction"],
+                        round(new_bic["avgSNR"], 2), len(
+                        new_bic["genes"]),
+                        len(new_bic["samples"]))
                     print(
                         "\tMerge biclusters %s:%sx%s (%s,%s) and %s:%sx%s  (%s,%s) --> %s SNR and %sx%s" % substitution)
                 new_bic["n_genes"] = len(new_bic["genes"])
@@ -838,20 +847,20 @@ def merge_biclusters(biclusters, exprs, exprs_data, min_n_samples=5,
 
 ###### save and read modules #####
 def write_bic_table(resulting_bics, results_file_name):
+    resulting_bics_df = pd.DataFrame.from_dict(resulting_bics)
     if len(resulting_bics) == 0:
         pass
     else:
-        resulting_bics = pd.DataFrame.from_dict(resulting_bics)
-        resulting_bics["genes"] = resulting_bics["genes"].apply(
+        resulting_bics_df["genes"] = resulting_bics_df["genes"].apply(
             lambda x: " ".join(map(str, x)))
-        resulting_bics["samples"] = resulting_bics["samples"].apply(
+        resulting_bics_df["samples"] = resulting_bics_df["samples"].apply(
             lambda x: " ".join(map(str, x)))
-        resulting_bics = resulting_bics[[
+        resulting_bics_df = resulting_bics_df[[
             "id", "avgSNR", "n_genes", "n_samples", "direction", "genes", "samples"]]
-        resulting_bics.sort_values(
+        resulting_bics_df.sort_values(
             by=["avgSNR", "n_genes", "n_samples"], inplace=True, ascending=False)
-        resulting_bics["id"] = range(0, resulting_bics.shape[0])
-    resulting_bics.to_csv(results_file_name, sep="\t", index=False)
+        resulting_bics_df["id"] = range(0, resulting_bics_df.shape[0])
+    resulting_bics_df.to_csv(results_file_name, sep="\t", index=False)
 
 
 def read_bic_table(results_file_name):

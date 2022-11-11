@@ -33,7 +33,7 @@ def define_SNR_threshold(snr_file, exprs, exprs_data, network, q,
             if verbose:
                 print("Use pre-computed SNR threshold.", file=sys.stdout)
             return (min_SNR)
-        except raise:
+        except:
             pass
 
     avgSNR = []
@@ -70,8 +70,7 @@ def relabel_exprs_and_network(exprs, network):
 
 
 def find_threshold(t_u, t_w, N, significance_thr):
-    'Find min. possible overlap still passing the significance threshold, ' +
-    'given t_u,t_w and N.'
+    'Find min. possible overlap still passing the significance threshold, given t_u,t_w and N.'
     prev_x = N
     for x in range(min(t_u, t_w), 0, -1):
         p_val = pvalue(x, t_u-x, t_w-x, N-t_u-t_w+x).right_tail

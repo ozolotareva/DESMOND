@@ -16,7 +16,7 @@ from method_post import merge_biclusters
 
 
 def get_rand_subnet(network, g_size, max_n_restarts=10):
-    n = random.choice(network.nodes())
+    n = random.choice(list(network.nodes()))
     genes = set([n])
     n_restatrs = 1
     while len(genes) < g_size:
@@ -37,7 +37,7 @@ def get_rand_subnet(network, g_size, max_n_restarts=10):
             if len(candidates2) > 0:
                 n = random.choice(candidates2)
             else:
-                n = random.choice(network.nodes())
+                n = random.choice(list(network.nodes()))
                 genes = set([n])
                 n_restatrs += 1
     return list(genes)
@@ -208,18 +208,29 @@ parser.add_argument('--merge_discordant', dest='merge_discordant',
                     help='Whether to merge up- and down-regulated ' +
                     'biclustert if their sample sets are similar.',
                     required=False)
-
-
 parser.add_argument('-rn', dest='n_permutations', type=int,
                     help='Number of random subnetworks sampled.', default=1000,
                     required=False)
-
 parser.add_argument('--verbose', dest='verbose',
                     action='store_true', help='', required=False)
 
 start_time = time.time()
 
-args = parser.parse_args()
+# Disable during debugging
+# args = parser.parse_args()
+
+# ! Disable during run
+args = argparse.Namespace(
+    exprs_file="/home/fabio/Downloads/desmod_run/D1_test/test_df.tsv",
+    network_file='/home/fabio/Downloads/unpast_trans/data/bicon_network.tsv',
+    up="/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST.alpha=0.5,beta_K=1.0,direction=UP,p_val=0.01,q=0.5.biclusters.tsv",
+    down="/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST.alpha=0.5,beta_K=1.0,direction=DOWN,p_val=0.01,q=0.5.biclusters.tsv",
+    out='/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST.alpha=0.5,beta_K=1.0,p_val=0.01,q=0.5.biclusters.permutations.tsv',
+    snr_file="/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST,q=0.5.SNR_threshold.txt",
+    merge_discordant=True,
+    n_permutations=1000,
+    min_n_samples=-1,
+    verbose=True)
 
 exprs, network = prepare_input_data(
     args.exprs_file, args.network_file, verbose=args.verbose)
