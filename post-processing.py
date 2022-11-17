@@ -217,20 +217,20 @@ parser.add_argument('--verbose', dest='verbose',
 start_time = time.time()
 
 # Disable during debugging
-# args = parser.parse_args()
+args = parser.parse_args()
 
 # ! Disable during run
-args = argparse.Namespace(
-    exprs_file="/home/fabio/Downloads/desmod_run/D1_test/test_df.tsv",
-    network_file='/home/fabio/Downloads/unpast_trans/data/bicon_network.tsv',
-    up="/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST.alpha=0.5,beta_K=1.0,direction=UP,p_val=0.01,q=0.5.biclusters.tsv",
-    down="/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST.alpha=0.5,beta_K=1.0,direction=DOWN,p_val=0.01,q=0.5.biclusters.tsv",
-    out='/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST.alpha=0.5,beta_K=1.0,p_val=0.01,q=0.5.biclusters.permutations.tsv',
-    snr_file="/home/fabio/Downloads/desmod_run/D1_test/TEST/TEST,q=0.5.SNR_threshold.txt",
-    merge_discordant=True,
-    n_permutations=1000,
-    min_n_samples=-1,
-    verbose=True)
+# args = argparse.Namespace(
+#     exprs_file="/home/fabio/Downloads/unpast_trans/data/TCGA-BRCA_1079_17Kgenes.Xena_TCGA_PanCan.log2_exprs_z_v6.tsv",
+#     network_file='/home/fabio/Downloads/unpast_trans/data/bicon_network.tsv',
+#     up="/home/fabio/Downloads/desmod_run/D1/GDC/GDC.alpha=0.5,beta_K=1.0,direction=UP,p_val=0.01,q=0.5.biclusters.tsv",
+#     down="/home/fabio/Downloads/desmod_run/D1/GDC/GDC.alpha=0.5,beta_K=1.0,direction=DOWN,p_val=0.01,q=0.5.biclusters.tsv",
+#     out='/home/fabio/Downloads/desmod_run/D1/GDC/GDC.alpha=0.5,beta_K=1.0,p_val=0.01,q=0.5.biclusters.permutations.tsv',
+#     snr_file="/home/fabio/Downloads/desmod_run/D1/GDC/GDC,q=0.5.SNR_threshold.txt",
+#     merge_discordant=True,
+#     n_permutations=1000,
+#     min_n_samples=-1,
+#     verbose=True)
 
 exprs, network = prepare_input_data(
     args.exprs_file, args.network_file, verbose=args.verbose)
